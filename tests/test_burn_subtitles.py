@@ -166,13 +166,17 @@ class ProgressBarTests(unittest.TestCase):
             content,
         )
         self.assertIn("ProgressFill", content)
-        self.assertIn("ProgressTrack", content)
+        self.assertNotIn("ProgressTrack", content)
         self.assertIn(BURN_SUBTITLES._PROGRESS_FILL_COLOUR, content)
+        self.assertIn(BURN_SUBTITLES._PROGRESS_FILL_ALPHA, content)
         fill_lines = [line for line in content.splitlines() if "ProgressFill" in line]
         self.assertTrue(fill_lines)
         fill_y = int(fill_lines[0].split("pos(0,")[1].split(")")[0])
-        self.assertLess(fill_y, layout["top_pad"])
-        self.assertGreaterEqual(fill_y, layout["top_pad"] - layout["progress_line_height"] - 1)
+        self.assertEqual(fill_y, 0)
+        self.assertEqual(layout["progress_fill_y"], 0)
+        self.assertEqual(layout["progress_fill_height"], layout["top_pad"])
+        self.assertTrue(fill_lines[0].rstrip().endswith(f"l 0 {layout['top_pad']}"))
+        self.assertLess(layout["progress_label_y"], layout["top_pad"])
 
     def test_three_minute_video_does_not_show_progress(self):
         payload = {

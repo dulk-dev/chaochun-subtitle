@@ -193,14 +193,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .content-progress-fill {
     position: absolute;
     z-index: 1;
-    top: auto;
+    top: 0;
     bottom: 0;
     left: 0;
-    height: 6px;
+    height: auto;
     width: 0;
-    background: #c8c8c8;
+    background: rgba(200, 200, 200, 0.42);
   }
-  .content-progress-markers { position: absolute; z-index: 2; inset: 18% 0 6px; }
+  .content-progress-markers { position: absolute; z-index: 2; inset: 0; }
   .content-progress-marker {
     position: absolute;
     top: 0;
@@ -211,7 +211,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .content-progress-labels {
     position: absolute;
     z-index: 3;
-    inset: 0 0 8px;
+    inset: 0;
   }
   .content-progress-label {
     position: absolute;

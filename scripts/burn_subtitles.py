@@ -29,7 +29,7 @@ _SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.92
 _UPSTREAM_PROGRESS_FONT_1080P = 22
 _PROGRESS_LABEL_COLOUR = "&H00B4B4B4&"
 _PROGRESS_FILL_COLOUR = "&H00C8C8C8&"
-_PROGRESS_TRACK_COLOUR = "&H005A5A5A&"
+_PROGRESS_FILL_ALPHA = "&H8C&"
 _CAPTION_PRIMARY_COLOUR = "&H00FFFFFF&"
 _DEFAULT_BEAUTY_STRENGTH_PERCENT = 10.0
 _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
@@ -582,13 +582,8 @@ def letterbox_layout(
         if progress
         else 12
     )
-    progress_line_height = max(6, int(round(content_height * 0.007))) if progress else 0
-    if progress_line_height % 2:
-        progress_line_height += 1
     if progress:
-        top_pad = _even_dimension(
-            max(80, int(progress_font * 1.70) + progress_line_height + 18)
-        )
+        top_pad = _even_dimension(max(80, int(progress_font * 2.10)))
     else:
         top_pad = _even_dimension(max(48, int(content_height * 0.044)))
 
@@ -603,8 +598,9 @@ def letterbox_layout(
         bottom_pad += 1
         canvas_height += 1
 
-    progress_line_y = top_pad - progress_line_height
-    progress_label_y = max(progress_font, (top_pad - progress_line_height) // 2)
+    progress_fill_height = top_pad if progress else 0
+    progress_fill_y = 0
+    progress_label_y = top_pad // 2
 
     stack_height = zh_line + stack_gap + en_line
     stack_top = content_height + top_pad + max(0, int((bottom_pad - stack_height) / 2))
@@ -621,9 +617,9 @@ def letterbox_layout(
         "zh_font": zh_font,
         "en_font": en_font,
         "progress_font": progress_font,
-        "progress_line_height": progress_line_height,
+        "progress_fill_height": progress_fill_height,
+        "progress_fill_y": progress_fill_y,
         "progress_label_y": progress_label_y,
-        "progress_line_y": progress_line_y,
         "zh_y": zh_y,
         "en_y": en_y,
         "zh_line_height": zh_line,
@@ -773,35 +769,29 @@ def chapter_slot_max_visual(slot_width_px: int, font_size: int) -> float:
 def _progress_events(
     chapters: list[dict], layout: dict, duration: float
 ) -> tuple[list[str], int, int]:
-    """Draw chapter progress in the top letterbox, never over the picture."""
+    """Draw chapter directory and a translucent fill in one top-letterbox band."""
     if not chapters:
         return [], 0, layout.get("progress_font", 12)
     duration = max(duration, 0.01)
     video_width = layout["canvas_width"]
-    progress_line_height = layout["progress_line_height"]
-    line_y = layout["progress_line_y"]
+    fill_height = layout["progress_fill_height"] or layout["top_pad"]
+    fill_y = layout["progress_fill_y"]
     label_y = layout["progress_label_y"]
     font_size = layout["progress_font"]
-    events = [
-        (
-            f"Dialogue: 0,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
-            f"CaptionBox,ProgressTrack,0,0,0,,"
-            f"{{\\an7\\pos(0,{line_y})\\p1\\1c{_PROGRESS_TRACK_COLOUR}\\1a&H00&\\bord0\\shad0}}"
-            f"{_rect_path(video_width, progress_line_height)}"
-        )
-    ]
+    events = []
     for tick in range(int(math.ceil(duration))):
         start = float(tick)
         end = min(duration, tick + 1.0)
         fill_width = max(1, int(video_width * end / duration))
         events.append(
-            f"Dialogue: 1,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},CaptionBox,ProgressFill,0,0,0,,"
-            f"{{\\an7\\pos(0,{line_y})\\p1\\1c{_PROGRESS_FILL_COLOUR}\\1a&H00&\\bord0\\shad0}}"
-            f"{_rect_path(fill_width, progress_line_height)}"
+            f"Dialogue: 0,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},CaptionBox,ProgressFill,0,0,0,,"
+            f"{{\\an7\\pos(0,{fill_y})\\p1\\1c{_PROGRESS_FILL_COLOUR}"
+            f"\\1a{_PROGRESS_FILL_ALPHA}\\bord0\\shad0}}"
+            f"{_rect_path(fill_width, fill_height)}"
         )
     separator_width = max(2, int(video_width * 0.001))
-    marker_height = max(10, int(layout["top_pad"] * 0.42))
-    marker_y = max(0, label_y - marker_height // 2)
+    marker_height = max(12, layout["top_pad"] - 8)
+    marker_y = max(0, (layout["top_pad"] - marker_height) // 2)
     for chapter in chapters[1:]:
         x = int(video_width * float(chapter["start"]) / duration)
         events.append(
