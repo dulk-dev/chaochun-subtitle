@@ -3,7 +3,8 @@
 Burn subtitles onto an exported video using ffmpeg.
 Converts transcript.json (from local_transcribe.py or another ASR) → ASS subtitle file → burned video.
 
-Style: white PingFang text, rounded translucent backing, centered bottom.
+Default chaochun layout: letterbox (black bars), light-gray timestamp on top,
+white bilingual captions (Chinese above English) in the bottom bar.
 """
 
 import argparse
@@ -24,7 +25,10 @@ from user_config import resolve_glossary_path as resolve_user_glossary_path
 from user_config import resolve_progress_enabled
 
 _DISPLAY_REPLACEMENTS: list[tuple[re.Pattern, str]] = []
-_SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.86
+_SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.92
+_UPSTREAM_TIMESTAMP_FONT_1080P = 22
+_TIMESTAMP_PRIMARY_COLOUR = "&H00B4B4B4&"
+_CAPTION_PRIMARY_COLOUR = "&H00FFFFFF&"
 _DEFAULT_BEAUTY_STRENGTH_PERCENT = 10.0
 _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
 _BRIGHTEN_LAYER_BRIGHTNESS = 0.08
@@ -541,61 +545,137 @@ def final_display_text(text: str) -> str:
     return _apply_display_replacements(add_cjk_spacing(_strip_display_punctuation(text)))
 
 
-def _subtitle_style_metrics(video_width: int, video_height: int) -> tuple[int, int]:
-    is_portrait = video_height > video_width
-    font_size = max(44, int(video_height * (0.042 if is_portrait else 0.061)))
-    margin_v = int(video_height * (0.20 if is_portrait else 0.06))
-    return font_size, margin_v
+def _caption_font_name() -> str:
+    """Prefer PingFang on macOS; fall back to a CJK-capable font elsewhere."""
+    if sys.platform == "darwin":
+        return "PingFang SC"
+    return "WenQuanYi Micro Hei"
 
 
-def _safe_max_chars_for_video(video_width: int, video_height: int) -> int:
-    font_size, _ = _subtitle_style_metrics(video_width, video_height)
-    pad_x = int(font_size * 0.32)
+def letterbox_layout(
+    content_width: int,
+    content_height: int,
+    *,
+    bilingual: bool = True,
+    progress: bool = False,
+) -> dict:
+    """Compute even letterbox pads and text anchors for the burned frame.
+
+    Original picture stays unscaled in the middle. Timestamp sits in the top
+    black bar; bilingual captions sit in the bottom black bar.
+    """
+    content_width = _even_dimension(content_width)
+    content_height = _even_dimension(content_height)
+    is_portrait = content_height > content_width
+    timestamp_font = max(32, int(content_height * (0.034 if is_portrait else 0.038)))
+    zh_font = max(40, int(content_height * (0.034 if is_portrait else 0.042)))
+    en_font = max(24, int(round(zh_font * 0.70))) if bilingual else 0
+    progress_font = max(18, int(timestamp_font * 0.52)) if progress else 12
+    progress_line_height = max(3, int(round(content_height * 0.003)))
+
+    top_inner = int(timestamp_font * 1.90)
+    if progress:
+        top_inner = int(timestamp_font * 1.45) + max(32, int(content_height * 0.038))
+    top_pad = _even_dimension(max(72, top_inner))
+
+    zh_line = int(zh_font * 1.20)
+    en_line = int(en_font * 1.22) if bilingual else 0
+    stack_gap = int(zh_font * 0.10) if bilingual else 0
+    bottom_pad = _even_dimension(
+        max(96 if bilingual else 72, zh_line + en_line + stack_gap + int(zh_font * 0.50))
+    )
+    canvas_height = content_height + top_pad + bottom_pad
+    if canvas_height % 2:
+        bottom_pad += 1
+        canvas_height += 1
+
+    timestamp_y = int(round(top_pad * (0.36 if progress else 0.50)))
+    progress_label_y = int(round(top_pad * 0.70))
+    progress_line_y = top_pad - progress_line_height
+
+    stack_height = zh_line + stack_gap + en_line
+    stack_top = content_height + top_pad + max(0, int((bottom_pad - stack_height) / 2))
+    zh_y = stack_top + zh_line // 2
+    en_y = stack_top + zh_line + stack_gap + max(en_line, 1) // 2 if bilingual else 0
+
+    return {
+        "content_width": content_width,
+        "content_height": content_height,
+        "top_pad": top_pad,
+        "bottom_pad": bottom_pad,
+        "canvas_width": content_width,
+        "canvas_height": canvas_height,
+        "timestamp_font": timestamp_font,
+        "zh_font": zh_font,
+        "en_font": en_font,
+        "progress_font": progress_font,
+        "progress_line_height": progress_line_height,
+        "timestamp_y": timestamp_y,
+        "progress_label_y": progress_label_y,
+        "progress_line_y": progress_line_y,
+        "zh_y": zh_y,
+        "en_y": en_y,
+        "zh_line_height": zh_line,
+        "en_line_height": en_line,
+        "bilingual": bilingual,
+        "progress": progress,
+    }
+
+
+def letterbox_pad_filter(layout: dict) -> str:
+    """FFmpeg pad filter that extends the original frame with top/bottom bars."""
+    return (
+        f"pad={layout['canvas_width']}:{layout['canvas_height']}"
+        f":0:{layout['top_pad']}:black"
+    )
+
+
+def _safe_max_chars_for_font(video_width: int, font_size: int) -> int:
+    pad_x = int(font_size * 0.28)
     usable_width = int(video_width * _SUBTITLE_BOX_MAX_WIDTH_RATIO) - pad_x * 2
     char_width = font_size * 0.72
     return max(4, int(usable_width / char_width))
 
 
-def _resolve_effective_max_chars(requested: int, video_width: int, video_height: int, square_output: bool) -> int:
-    orientation_default = 18 if square_output else (16 if video_height > video_width else 28)
-    target = requested if requested > 0 else orientation_default
-    return min(target, _safe_max_chars_for_video(video_width, video_height))
+def _safe_max_chars_for_video(video_width: int, video_height: int) -> int:
+    layout = letterbox_layout(video_width, video_height, bilingual=True)
+    return _safe_max_chars_for_font(video_width, layout["zh_font"])
 
 
-def _wrap_display_text(text: str, max_chars: int) -> str:
+def _resolve_effective_max_chars(
+    requested: int,
+    video_width: int,
+    video_height: int,
+    square_output: bool,
+    *,
+    bilingual: bool = True,
+) -> int:
+    layout = letterbox_layout(video_width, video_height, bilingual=bilingual)
+    safe = _safe_max_chars_for_font(video_width, layout["zh_font"])
+    if requested > 0:
+        return min(requested, safe)
+    if square_output:
+        return min(22, safe)
+    return safe
+
+
+def _wrap_display_text(text: str, max_chars: int, *, prefer_single_line: bool = True) -> str:
     text = final_display_text(text).strip()
     if max_chars <= 0 or not text:
+        return text
+    if prefer_single_line and _visual_len(text) <= max_chars:
         return text
 
     parts = []
     for raw in text.splitlines():
         raw = raw.strip()
-        if raw:
+        if not raw:
+            continue
+        if prefer_single_line and _visual_len(raw) <= max_chars:
+            parts.append(raw)
+        else:
             parts.extend(_split_text(raw, max_chars))
     return "\n".join(part for part in parts if part)
-
-
-def _rounded_rect_path(width: int, height: int, radius: int) -> str:
-    """Return an ASS vector path for a rounded rectangle."""
-    width = max(1, int(width))
-    height = max(1, int(height))
-    radius = max(1, min(int(radius), width // 2, height // 2))
-    k = 0.55228475
-    c = int(round(radius * k))
-    w = width
-    h = height
-    r = radius
-    return (
-        f"m {r} 0 "
-        f"l {w - r} 0 "
-        f"b {w - r + c} 0 {w} {r - c} {w} {r} "
-        f"l {w} {h - r} "
-        f"b {w} {h - r + c} {w - r + c} {h} {w - r} {h} "
-        f"l {r} {h} "
-        f"b {r - c} {h} 0 {h - r + c} 0 {h - r} "
-        f"l 0 {r} "
-        f"b 0 {r - c} {r - c} 0 {r} 0"
-    )
 
 
 def _rect_path(width: int, height: int) -> str:
@@ -603,20 +683,6 @@ def _rect_path(width: int, height: int) -> str:
     width = max(1, int(width))
     height = max(1, int(height))
     return f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
-
-
-def _subtitle_box_geometry(text: str, font_size: int, video_width: int, video_height: int, margin_v: int) -> tuple[int, int, int, int]:
-    """Estimate the rounded backing box around a bottom-centered subtitle."""
-    lines = [line for line in text.split("\n") if line.strip()] or [text]
-    max_text_width = max(_visual_len(line) for line in lines) * font_size * 0.72
-    pad_x = int(font_size * 0.32)
-    pad_y = int(font_size * 0.16)
-    line_height = int(font_size * 1.12)
-    box_width = min(int(max_text_width + pad_x * 2), int(video_width * _SUBTITLE_BOX_MAX_WIDTH_RATIO))
-    box_height = int(line_height * len(lines) + pad_y * 2)
-    box_x = int((video_width - box_width) / 2)
-    box_y = int(video_height - margin_v - line_height * len(lines) - pad_y)
-    return box_x, box_y, box_width, box_height
 
 
 def _ass_escape(text: str) -> str:
@@ -650,24 +716,47 @@ def load_progress_chapters(
     return chapters
 
 
-def _progress_overlay_metrics(content_height: int) -> tuple[int, int]:
-    """Return the bottom-overlay height and readable label size."""
-    progress_height = max(54, int(round(content_height * 0.075)))
-    if progress_height % 2:
-        progress_height += 1
-    progress_font = max(18, int(progress_height * 0.28))
-    return progress_height, progress_font
+def format_clock(seconds: float, duration: float) -> str:
+    """Format a running on-screen timestamp for the current playback second."""
+    total = max(0, int(seconds))
+    if duration >= 3600:
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _timestamp_events(duration: float, layout: dict) -> list[str]:
+    """Emit one light-gray clock event per second in the top letterbox."""
+    duration = max(duration, 0.01)
+    ticks = max(1, int(math.ceil(duration)))
+    x = layout["canvas_width"] // 2
+    y = layout["timestamp_y"]
+    events = []
+    for tick in range(ticks):
+        start = float(tick)
+        end = min(duration, tick + 1.0)
+        if end <= start:
+            continue
+        events.append(
+            f"Dialogue: 0,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},"
+            f"Timestamp,,0,0,0,,"
+            f"{{\\an5\\pos({x},{y})}}{format_clock(start, duration)}"
+        )
+    return events
 
 
 def _progress_events(
-    chapters: list[dict], video_width: int, content_height: int, duration: float
+    chapters: list[dict], layout: dict, duration: float
 ) -> tuple[list[str], int, int]:
+    """Draw chapter progress in the top letterbox, never over the picture."""
     if not chapters:
-        return [], 0, 12
-    progress_height, progress_font = _progress_overlay_metrics(content_height)
-    progress_line_height = max(3, int(round(content_height * 0.003)))
-    y = content_height - progress_height
-    line_y = content_height - progress_line_height
+        return [], 0, layout.get("progress_font", 12)
+    video_width = layout["canvas_width"]
+    progress_line_height = layout["progress_line_height"]
+    line_y = layout["progress_line_y"]
+    label_y = layout["progress_label_y"]
     events = []
     for tick in range(int(math.ceil(duration))):
         start = float(tick)
@@ -679,8 +768,8 @@ def _progress_events(
             f"{_rect_path(fill_width, progress_line_height)}"
         )
     separator_width = max(2, int(video_width * 0.001))
-    marker_y = y + int(progress_height * 0.34)
-    marker_height = max(1, line_y - marker_y)
+    marker_height = max(8, int(layout["top_pad"] * 0.22))
+    marker_y = max(0, label_y - marker_height // 2)
     for chapter in chapters[1:]:
         x = int(video_width * float(chapter["start"]) / duration)
         events.append(
@@ -694,65 +783,154 @@ def _progress_events(
         events.append(
             f"Dialogue: 3,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
             f"ProgressLabel,,0,0,0,,"
-            f"{{\\an5\\pos({x},{y + int(progress_height * 0.68)})}}"
+            f"{{\\an5\\pos({x},{label_y})}}"
             f"{_ass_escape(str(chapter['title']))}"
         )
-    return events, progress_height, progress_font
+    return events, layout["top_pad"], layout["progress_font"]
+
+
+def line_english_text(line: dict) -> str:
+    return str(line.get("en") or line.get("text_en") or "").strip()
+
+
+def merge_english_srt(lines: list[dict], english_lines: list[dict]) -> list[dict]:
+    """Attach English captions onto Chinese lines by index, then by start time."""
+    merged = [dict(line) for line in lines]
+    if len(english_lines) == len(merged):
+        for item, english in zip(merged, english_lines):
+            item["en"] = english["text"]
+        return merged
+    remaining = list(english_lines)
+    for item in merged:
+        match_idx = next(
+            (
+                index
+                for index, english in enumerate(remaining)
+                if abs(float(english["start"]) - float(item["start"])) <= 0.12
+            ),
+            None,
+        )
+        if match_idx is None:
+            continue
+        item["en"] = remaining.pop(match_idx)["text"]
+    return merged
+
+
+def _translate_with_qwen(texts: list[str], *, model: str = "qwen-plus") -> list[str]:
+    from dashscope_client import call_qwen_json
+
+    translated: list[str] = []
+    batch_size = 40
+    for start in range(0, len(texts), batch_size):
+        chunk = texts[start:start + batch_size]
+        numbered = "\n".join(f"{index + 1}. {text}" for index, text in enumerate(chunk))
+        payload, _usage = call_qwen_json(
+            prompt=(
+                "Translate these Chinese video captions into concise English.\n"
+                "Keep the same count and order. Do not add commentary, quotes, or numbering.\n"
+                "Preserve product names, abbreviations, and first-person voice.\n"
+                'Return JSON: {"translations": ["...", "..."]}\n\n'
+                f"CAPTIONS\n{numbered}"
+            ),
+            system="You translate Chinese video captions into English. Return strict JSON only.",
+            model=model,
+            max_tokens=8192,
+            timeout=180,
+        )
+        batch = payload.get("translations") or []
+        if not isinstance(batch, list) or len(batch) != len(chunk):
+            raise RuntimeError(
+                f"Bilingual translation returned {len(batch) if isinstance(batch, list) else 0} "
+                f"lines for a batch of {len(chunk)}"
+            )
+        translated.extend(str(item or "").strip() for item in batch)
+    return translated
+
+
+def translate_caption_lines(
+    lines: list[dict],
+    *,
+    translator=None,
+) -> list[dict]:
+    """Fill missing English text on subtitle lines. Existing `en` values are kept."""
+    pending_indexes = [
+        index for index, line in enumerate(lines) if not line_english_text(line)
+    ]
+    if not pending_indexes:
+        return [dict(line) for line in lines]
+    sources = [str(lines[index].get("text") or "").strip() for index in pending_indexes]
+    translations = translator(sources) if translator else _translate_with_qwen(sources)
+    if len(translations) != len(pending_indexes):
+        raise RuntimeError("Bilingual translation count does not match Chinese captions")
+    result = [dict(line) for line in lines]
+    for index, english in zip(pending_indexes, translations):
+        result[index]["en"] = str(english or "").strip()
+    return result
 
 
 def generate_ass(lines: list[dict], output_path: Path, video_width: int = 1920,
                  video_height: int = 1080, max_chars: int = 0,
                  preserve_text: bool = False, chapters: list[dict] | None = None,
-                 duration: float = 0.0):
-    """Generate Chinese ASS subtitles with the original single-language style."""
+                 duration: float = 0.0, bilingual: bool = False):
+    """Generate letterbox ASS: top timestamp, bottom Chinese/English captions."""
 
-    font_size, margin_v = _subtitle_style_metrics(video_width, video_height)
     chapters = chapters or []
     duration = duration or max((float(line["end"]) for line in lines), default=0.0)
-    progress_events, progress_height, progress_font = _progress_events(
-        chapters, video_width, video_height, duration
+    layout = letterbox_layout(
+        video_width,
+        video_height,
+        bilingual=bilingual,
+        progress=bool(chapters),
     )
-    canvas_height = video_height
-    caption_margin_v = margin_v
-    if chapters:
-        caption_margin_v = max(
-            margin_v,
-            progress_height + int(video_height * 0.018),
-        )
+    font_name = _caption_font_name()
+    zh_max = max_chars if max_chars > 0 else _safe_max_chars_for_font(
+        layout["canvas_width"], layout["zh_font"]
+    )
+    en_max = _safe_max_chars_for_font(layout["canvas_width"], layout["en_font"] or layout["zh_font"])
+    progress_events, _progress_height, progress_font = _progress_events(
+        chapters, layout, duration
+    )
 
     ass_header = textwrap.dedent(f"""\
         [Script Info]
         ScriptType: v4.00+
-        PlayResX: {video_width}
-        PlayResY: {canvas_height}
-        WrapStyle: 0
+        PlayResX: {layout['canvas_width']}
+        PlayResY: {layout['canvas_height']}
+        WrapStyle: 2
+        ScaledBorderAndShadow: yes
 
         [V4+ Styles]
         Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-        Style: CaptionText,PingFang SC,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,20,20,{caption_margin_v},1
+        Style: Timestamp,{font_name},{layout['timestamp_font']},{_TIMESTAMP_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+        Style: CaptionZh,{font_name},{layout['zh_font']},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
+        Style: CaptionEn,{font_name},{layout['en_font'] or max(24, int(layout['zh_font'] * 0.7))},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
         Style: CaptionBox,Arial,10,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-        Style: ProgressLabel,PingFang SC,{progress_font},&H10FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+        Style: ProgressLabel,{font_name},{progress_font},&H10FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 
         [Events]
         Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     """)
 
-    event_lines = list(progress_events)
+    event_lines = _timestamp_events(duration, layout)
+    event_lines.extend(progress_events)
+    center_x = layout["canvas_width"] // 2
     for line in lines:
         start = seconds_to_ass_time(line["start"])
         end = seconds_to_ass_time(line["end"])
-        text = line["text"].strip() if preserve_text else _wrap_display_text(line["text"], max_chars)
-        box_x, box_y, box_width, box_height = _subtitle_box_geometry(
-            text, font_size, video_width, video_height, caption_margin_v
-        )
-        radius = int(font_size * 0.24)
-        box_path = _rounded_rect_path(box_width, box_height, radius)
-        display_text = text.replace("\n", "\\N")
+        zh_source = line["text"].strip() if preserve_text else _wrap_display_text(line["text"], zh_max)
+        zh_display = _ass_escape(zh_source).replace("\n", r"\N")
         event_lines.append(
-            f"Dialogue: 4,{start},{end},CaptionBox,,0,0,0,,"
-            f"{{\\an7\\pos({box_x},{box_y})\\p1\\1c&H202020&\\1a&H90&\\bord0\\shad0}}{box_path}"
+            f"Dialogue: 5,{start},{end},CaptionZh,,0,0,0,,"
+            f"{{\\an5\\pos({center_x},{layout['zh_y']})}}{zh_display}"
         )
-        event_lines.append(f"Dialogue: 5,{start},{end},CaptionText,,0,0,0,,{display_text}")
+        english = line_english_text(line)
+        if bilingual and english:
+            en_source = english if preserve_text else _wrap_display_text(english, en_max)
+            en_display = _ass_escape(en_source).replace("\n", r"\N")
+            event_lines.append(
+                f"Dialogue: 5,{start},{end},CaptionEn,,0,0,0,,"
+                f"{{\\an5\\pos({center_x},{layout['en_y']})}}{en_display}"
+            )
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ass_header)
@@ -1024,14 +1202,14 @@ def build_beauty_filter_graph(
     brighten_strength: float = _DEFAULT_BRIGHTEN_STRENGTH_PERCENT / 100,
     filter_prefix: list[str] | None = None,
     scale_to: tuple[int, int] | None = None,
-    progress_overlay_height: int = 0,
+    pad_filter: str | None = None,
 ) -> tuple[str, str]:
     """Build one FFmpeg graph for light camera beauty plus subtitles.
 
     Both strengths are normalized to 0..1. The original camera region remains
     the dominant layer: the defaults mix in 10% edge-preserving smoothing and
-    10% of a conservatively brightened layer. Subtitles are rendered last so
-    their edges are never softened or brightened.
+    10% of a conservatively brightened layer. Letterbox padding and subtitles
+    are rendered last so their edges are never softened or brightened.
     """
     if not 0 <= smoothing_strength <= 1:
         raise ValueError("Smoothing strength must be in the range [0, 1]")
@@ -1092,67 +1270,10 @@ def build_beauty_filter_graph(
     final_filters = list(filter_prefix or [])
     if scale_to:
         final_filters.append(f"scale={scale_to[0]}:{scale_to[1]}")
-    if progress_overlay_height:
-        graph_parts.append(
-            f"[beautified]{','.join(final_filters) if final_filters else 'null'}"
-            "[prepared]"
-        )
-        _append_progress_gradient(
-            graph_parts,
-            "prepared",
-            ass_filter,
-            progress_overlay_height,
-        )
-    else:
-        final_filters.append(ass_filter)
-        graph_parts.append(f"[beautified]{','.join(final_filters)}[video_out]")
-    return ";".join(graph_parts), "[video_out]"
-
-
-def _append_progress_gradient(
-    graph_parts: list[str],
-    input_label: str,
-    ass_filter: str,
-    progress_overlay_height: int,
-) -> None:
-    """Overlay one continuous RGBA gradient, then render ASS labels above it."""
-    height = max(2, int(progress_overlay_height))
-    graph_parts.extend([
-        f"[{input_label}]split=2[gradient_base][gradient_source]",
-        (
-            f"[gradient_source]crop=iw:{height}:0:ih-{height},format=rgba,"
-            "geq=r='47':g='47':b='49':a='255*0.72*Y/(H-1)'"
-            "[progress_gradient]"
-        ),
-        (
-            "[gradient_base][progress_gradient]"
-            "overlay=0:main_h-overlay_h:format=auto[with_progress]"
-        ),
-        f"[with_progress]{ass_filter}[video_out]",
-    ])
-
-
-def build_progress_filter_graph(
-    ass_filter: str,
-    progress_overlay_height: int,
-    *,
-    filter_prefix: list[str] | None = None,
-    scale_to: tuple[int, int] | None = None,
-) -> tuple[str, str]:
-    """Build the non-beauty graph for a smooth progress gradient and ASS."""
-    graph_parts = []
-    initial_filters = list(filter_prefix or [])
-    if scale_to:
-        initial_filters.append(f"scale={scale_to[0]}:{scale_to[1]}")
-    graph_parts.append(
-        f"[0:v]{','.join(initial_filters) if initial_filters else 'null'}[prepared]"
-    )
-    _append_progress_gradient(
-        graph_parts,
-        "prepared",
-        ass_filter,
-        progress_overlay_height,
-    )
+    if pad_filter:
+        final_filters.append(pad_filter)
+    final_filters.append(ass_filter)
+    graph_parts.append(f"[beautified]{','.join(final_filters)}[video_out]")
     return ";".join(graph_parts), "[video_out]"
 
 
@@ -1163,7 +1284,7 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
                    encoder: str = "x264",
                    video_size: tuple[int, int] | None = None,
                    camera_region: tuple[int, int, int, int] | None = None,
-                   progress_overlay_height: int = 0):
+                   pad_filter: str | None = None):
     """Burn ASS subtitles into video using ffmpeg.
 
     scale_to: (width, height) to scale before rendering subtitles.
@@ -1183,11 +1304,12 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
     if scale_to:
         w, h = scale_to
         vf_parts.append(f"scale={w}:{h}")
+    if pad_filter:
+        vf_parts.append(pad_filter)
     vf_parts.append(ass_filter)
     vf = ",".join(vf_parts)
 
     beauty_enabled = camera_region is not None
-    progress_enabled = progress_overlay_height > 0
     if beauty_enabled and not video_size:
         raise ValueError("video_size is required when beauty smoothing is enabled")
     if beauty_enabled:
@@ -1198,7 +1320,7 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
             camera_region,
             filter_prefix=filter_prefix,
             scale_to=scale_to,
-            progress_overlay_height=progress_overlay_height,
+            pad_filter=pad_filter,
         )
         x, y, width, height = camera_region
         log(
@@ -1206,23 +1328,16 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
             f"{_DEFAULT_BRIGHTEN_STRENGTH_PERCENT:g}% brightening "
             f"in detected camera region {width}x{height}+{x}+{y}"
         )
-    elif progress_enabled:
-        graph, video_map = build_progress_filter_graph(
-            ass_filter,
-            progress_overlay_height,
-            filter_prefix=filter_prefix,
-            scale_to=scale_to,
-        )
-        log("Continuous translucent progress gradient enabled")
-        log("Beauty smoothing disabled")
     else:
         graph, video_map = "", ""
         log("Beauty smoothing disabled")
+        if pad_filter:
+            log("Letterbox padding enabled")
 
     if scale_to:
         log(f"Scaling to {scale_to[0]}x{scale_to[1]}")
     if encoder == "videotoolbox":
-        if scale_to or filter_prefix or beauty_enabled or progress_enabled:
+        if scale_to or filter_prefix or beauty_enabled or pad_filter:
             # H264 for filtered square/downscaled output (smaller file)
             video_codec = ["-c:v", "h264_videotoolbox", "-b:v", "8M"]
         else:
@@ -1245,7 +1360,7 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
     progress_path.unlink(missing_ok=True)
 
     cmd = ["ffmpeg", "-i", str(video_path)]
-    if beauty_enabled or progress_enabled:
+    if beauty_enabled:
         cmd.extend([
             "-filter_complex", graph,
             "-map", video_map,
@@ -1316,7 +1431,21 @@ def main():
         ),
     )
     parser.add_argument("--max-chars", type=int, default=0,
-                        help="Max visual chars per subtitle line. Default 0 = auto (landscape 28, portrait 16).")
+                        help="Max visual chars per subtitle line. Default 0 = fill the letterbox width as a single line.")
+    parser.add_argument(
+        "--bilingual",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Burn Chinese and English together (default: enabled). "
+            "Use --no-bilingual for Chinese-only captions."
+        ),
+    )
+    parser.add_argument(
+        "--en-srt",
+        default=None,
+        help="Optional English SRT aligned to the Chinese captions. If omitted, Qwen translates before burn.",
+    )
     parser.add_argument("--draft-output", default=None, help="Write an SRT draft for review")
     parser.add_argument("--draft-only", action="store_true", help="Only write the draft; do not generate ASS or burn")
     parser.add_argument("--ass-only", action="store_true", help="Only generate .ass file, don't burn")
@@ -1456,7 +1585,9 @@ def main():
             print(f"❌ {exc}")
             sys.exit(1)
         log(f"🧾 Loaded {len(lines)} reviewed SRT lines")
-        effective_max_chars = _resolve_effective_max_chars(args.max_chars, ass_w, ass_h, args.square_output)
+        effective_max_chars = _resolve_effective_max_chars(
+            args.max_chars, ass_w, ass_h, args.square_output, bilingual=args.bilingual
+        )
         log("🔒 Preserving reviewed SRT text, line breaks, and timing exactly")
     else:
         # Load transcript (supports both plain array and {"segments": [...]} from preview editor)
@@ -1466,13 +1597,36 @@ def main():
         log(f"📝 Loaded {len(segments)} transcript segments")
 
         # Convert segments to subtitle lines
-        effective_max_chars = _resolve_effective_max_chars(args.max_chars, ass_w, ass_h, args.square_output)
+        effective_max_chars = _resolve_effective_max_chars(
+            args.max_chars, ass_w, ass_h, args.square_output, bilingual=args.bilingual
+        )
         log(f"🔠 Subtitle line width: {effective_max_chars} visual chars")
         lines = segments_to_lines(segments, effective_max_chars)
+        if len(lines) == len(segments):
+            for line, segment in zip(lines, segments):
+                english = str(segment.get("en") or segment.get("text_en") or "").strip()
+                if english:
+                    line["en"] = english
         log(f"🔤 Generated {len(lines)} subtitle lines")
 
     if not srt_input_path:
         lines = normalize_line_timing(lines)
+
+    if args.bilingual:
+        en_srt_path = Path(args.en_srt) if args.en_srt else None
+        if en_srt_path:
+            if not en_srt_path.exists():
+                print(f"❌ English SRT not found: {en_srt_path}")
+                sys.exit(1)
+            try:
+                lines = merge_english_srt(lines, read_srt_lines(en_srt_path))
+            except ValueError as exc:
+                print(f"❌ {exc}")
+                sys.exit(1)
+            log(f"🌐 Loaded English captions from {en_srt_path.name}")
+        log("🌐 Bilingual burn enabled (Chinese above English)")
+    else:
+        log("Chinese-only burn")
 
     try:
         chapters = load_progress_chapters(
@@ -1490,8 +1644,16 @@ def main():
             else "Progress bar disabled because the video is at most three minutes or has no chapters"
         )
     )
-    progress_overlay_height = (
-        _progress_overlay_metrics(ass_h)[0] if chapters else 0
+    layout = letterbox_layout(
+        ass_w,
+        ass_h,
+        bilingual=args.bilingual,
+        progress=bool(chapters),
+    )
+    pad_filter = letterbox_pad_filter(layout)
+    log(
+        f"⬛ Letterbox canvas {layout['canvas_width']}x{layout['canvas_height']} "
+        f"(top {layout['top_pad']}px, bottom {layout['bottom_pad']}px)"
     )
 
     if args.draft_output:
@@ -1504,6 +1666,16 @@ def main():
     if args.draft_only:
         return
 
+    if args.bilingual:
+        missing_english = [line for line in lines if not line_english_text(line)]
+        if missing_english:
+            log(f"🌐 Translating {len(missing_english)} Chinese captions into English")
+            try:
+                lines = translate_caption_lines(lines)
+            except Exception as exc:
+                print(f"❌ Bilingual translation failed: {exc}")
+                sys.exit(1)
+
     # Generate ASS (at output resolution so font size is correct)
     generate_ass(
         lines,
@@ -1514,7 +1686,25 @@ def main():
         preserve_text=bool(srt_input_path),
         chapters=chapters,
         duration=video_duration,
+        bilingual=args.bilingual,
     )
+    if args.bilingual:
+        english_draft = [
+            {
+                "start": line["start"],
+                "end": line["end"],
+                "text": line_english_text(line),
+            }
+            for line in lines
+            if line_english_text(line)
+        ]
+        if english_draft:
+            write_subtitle_draft(
+                english_draft,
+                ass_path.with_name(ass_path.stem + "_en.srt"),
+                0,
+                preserve_text=True,
+            )
 
     if args.ass_only:
         log(f"Done. ASS file: {ass_path}")
@@ -1534,7 +1724,7 @@ def main():
                    encoder=args.encoder,
                    video_size=(video_w, video_h),
                    camera_region=camera_region,
-                   progress_overlay_height=progress_overlay_height)
+                   pad_filter=pad_filter)
 
     log("")
     log("=" * 50)

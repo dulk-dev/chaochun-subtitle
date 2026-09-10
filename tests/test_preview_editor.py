@@ -17,24 +17,36 @@ SPEC.loader.exec_module(PREVIEW_EDITOR)
 
 class ProgressLayoutTests(unittest.TestCase):
     def test_progress_is_inside_the_video_overlay(self):
-        self.assertIn(
-            '<div class="current-subtitle" id="curSub"></div>\n'
-            '      <div class="content-progress" id="contentProgress">',
-            PREVIEW_EDITOR.HTML_TEMPLATE,
+        self.assertIn('id="burnTimestamp"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('class="letterbox-top"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('class="letterbox-bottom"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('id="contentProgress"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertLess(
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('class="letterbox-top"'),
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('id="vid"'),
+        )
+        self.assertLess(
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('id="vid"'),
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('class="letterbox-bottom"'),
         )
 
-    def test_progress_uses_a_transparent_bottom_gradient(self):
-        match = re.search(
+    def test_preview_timestamp_is_light_gray_and_progress_stays_in_top_bar(self):
+        timestamp = re.search(
+            r"\.burn-timestamp\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        progress = re.search(
             r"\.content-progress\s*\{(?P<rules>.*?)\}",
             PREVIEW_EDITOR.HTML_TEMPLATE,
             re.DOTALL,
         )
-        self.assertIsNotNone(match)
-        rules = match.group("rules")
-        self.assertIn("position: absolute", rules)
-        self.assertIn("bottom: 0", rules)
-        self.assertIn("linear-gradient", rules)
-        self.assertIn("rgba(47,47,49,0)", rules)
+        self.assertIsNotNone(timestamp)
+        self.assertIsNotNone(progress)
+        self.assertIn("color: #b4b4b4", timestamp.group("rules"))
+        self.assertIn("bottom: 0", progress.group("rules"))
+        self.assertIn("background: transparent", progress.group("rules"))
+        self.assertIn(".letterbox-bottom", PREVIEW_EDITOR.HTML_TEMPLATE)
 
 
 class ManualGlossaryHookTests(unittest.TestCase):
