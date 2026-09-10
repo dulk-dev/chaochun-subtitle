@@ -314,7 +314,12 @@ def main() -> None:
             "end": float(segment["end"]),
             "text": display_text(str(segment["text"])),
         }
+        english = str(segment.get("en") or segment.get("text_en") or "").strip()
+        if english:
+            prepared["zh"] = prepared["text"]
+            prepared["en"] = add_cjk_spacing(re.sub(r"\s+", " ", english))
         prepared_segments.append(prepared)
+    bilingual = any(item.get("en") for item in prepared_segments)
     chapters, chapter_usage = plan_chapters(segments, duration, args=args)
     if chapter_usage:
         usages.append(chapter_usage)
@@ -322,6 +327,7 @@ def main() -> None:
     subtitle_payload: dict[str, Any] = {
         "schema_version": 1,
         "subtitle_mode": "zh",
+        "bilingual": bilingual,
         "duration": round(duration, 3),
         "segments": prepared_segments,
         "language": "zh",
@@ -362,6 +368,7 @@ def main() -> None:
                 {
                     "video": video_ref,
                     "subtitle_mode": "zh",
+                    "bilingual": bilingual,
                     "duration": round(duration, 3),
                     "progress_requested": args.progress_enabled,
                     "min_progress_duration": args.min_progress_duration,
@@ -377,6 +384,7 @@ def main() -> None:
         )
     report = {
         "subtitle_mode": "zh",
+        "bilingual": bilingual,
         "segments": len(prepared_segments),
         "duration": round(duration, 3),
         "progress_enabled": bool(chapters),

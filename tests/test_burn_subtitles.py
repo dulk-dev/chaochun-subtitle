@@ -95,6 +95,8 @@ oil-html Vibe Coding，保留标点
 
         self.assertIn("grill-me\\N3:4 和 4:3 oil-html Vibe Coding", content)
         self.assertNotIn("grillme\\N", content)
+        self.assertIn("Style: CaptionZh,", content)
+        self.assertIn("&H00FFFFFF", content)
 
 
 class ProgressBarTests(unittest.TestCase):
@@ -128,8 +130,15 @@ class ProgressBarTests(unittest.TestCase):
         self.assertTrue(all("0:00:00.00,0:03:01.00" in line for line in labels))
         self.assertIn("开场", labels[0])
         self.assertIn("正文", labels[1])
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=False, progress=True)
+        for line in labels:
+            self.assertIn("\\q2", line)
+            y = int(line.split("pos(")[1].split(")")[0].split(",")[1])
+            self.assertLess(y, layout["top_pad"])
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertNotRegex(content, r"Dialogue: 0,.*Timestamp")
 
-    def test_progress_bar_is_a_transparent_overlay_inside_the_video(self):
+    def test_progress_bar_lives_in_the_top_letterbox(self):
         chapters = [
             {"title": "开场", "start": 0.0, "end": 90.0},
             {"title": "正文", "start": 90.0, "end": 181.0},
@@ -146,11 +155,28 @@ class ProgressBarTests(unittest.TestCase):
             )
             content = ass_path.read_text(encoding="utf-8")
 
-        self.assertIn("PlayResY: 1080", content)
-        self.assertNotIn("ProgressBand", content)
-        self.assertNotIn("ProgressShadow", content)
-        self.assertIn("Style: ProgressLabel,PingFang SC,22", content)
-        self.assertIn(r"\1c&HFFFFFF&", content)
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=False, progress=True)
+        self.assertIn(f"PlayResY: {layout['canvas_height']}", content)
+        self.assertGreater(layout["canvas_height"], 1080)
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertGreater(layout["progress_font"], BURN_SUBTITLES._UPSTREAM_PROGRESS_FONT_1080P)
+        self.assertIn(
+            f"Style: ProgressLabel,{BURN_SUBTITLES._caption_font_name()},{layout['progress_font']},"
+            f"{BURN_SUBTITLES._PROGRESS_LABEL_COLOUR}",
+            content,
+        )
+        self.assertIn("ProgressFill", content)
+        self.assertNotIn("ProgressTrack", content)
+        self.assertIn(BURN_SUBTITLES._PROGRESS_FILL_COLOUR, content)
+        self.assertIn(BURN_SUBTITLES._PROGRESS_FILL_ALPHA, content)
+        fill_lines = [line for line in content.splitlines() if "ProgressFill" in line]
+        self.assertTrue(fill_lines)
+        fill_y = int(fill_lines[0].split("pos(0,")[1].split(")")[0])
+        self.assertEqual(fill_y, 0)
+        self.assertEqual(layout["progress_fill_y"], 0)
+        self.assertEqual(layout["progress_fill_height"], layout["top_pad"])
+        self.assertTrue(fill_lines[0].rstrip().endswith(f"l 0 {layout['top_pad']}"))
+        self.assertLess(layout["progress_label_y"], layout["top_pad"])
 
     def test_three_minute_video_does_not_show_progress(self):
         payload = {
@@ -255,7 +281,10 @@ class BeautyFilterTests(unittest.TestCase):
         )
         self.assertTrue(graph.endswith("ass='/tmp/subtitles.ass'[video_out]"))
 
-    def test_graph_keeps_crop_and_scale_after_beauty(self):
+    def test_graph_keeps_crop_scale_and_letterbox_pad_after_beauty(self):
+        pad = BURN_SUBTITLES.letterbox_pad_filter(
+            BURN_SUBTITLES.letterbox_layout(720, 720, bilingual=True)
+        )
         graph, _ = BURN_SUBTITLES.build_beauty_filter_graph(
             "ass='/tmp/subtitles.ass'",
             1920,
@@ -265,49 +294,14 @@ class BeautyFilterTests(unittest.TestCase):
             0.10,
             filter_prefix=["crop=1080:1080:420:0"],
             scale_to=(720, 720),
+            pad_filter=pad,
         )
 
         self.assertIn(
             "[beautified]crop=1080:1080:420:0,scale=720:720,"
-            "ass='/tmp/subtitles.ass'[video_out]",
+            f"{pad},ass='/tmp/subtitles.ass'[video_out]",
             graph,
         )
-
-    def test_progress_graph_uses_one_continuous_rgba_gradient(self):
-        graph, output = BURN_SUBTITLES.build_progress_filter_graph(
-            "ass='/tmp/subtitles.ass'",
-            82,
-        )
-
-        self.assertEqual(output, "[video_out]")
-        self.assertIn("crop=iw:82:0:ih-82,format=rgba", graph)
-        self.assertIn(
-            "geq=r='47':g='47':b='49':a='255*0.72*Y/(H-1)'",
-            graph,
-        )
-        self.assertIn(
-            "overlay=0:main_h-overlay_h:format=auto[with_progress]",
-            graph,
-        )
-        self.assertTrue(graph.endswith("ass='/tmp/subtitles.ass'[video_out]"))
-
-    def test_beauty_graph_adds_gradient_after_crop_and_scale(self):
-        graph, _ = BURN_SUBTITLES.build_beauty_filter_graph(
-            "ass='/tmp/subtitles.ass'",
-            1920,
-            1080,
-            (1300, 20, 500, 500),
-            filter_prefix=["crop=1080:1080:420:0"],
-            scale_to=(720, 720),
-            progress_overlay_height=54,
-        )
-
-        self.assertIn(
-            "[beautified]crop=1080:1080:420:0,scale=720:720[prepared]",
-            graph,
-        )
-        self.assertIn("crop=iw:54:0:ih-54,format=rgba", graph)
-        self.assertTrue(graph.endswith("ass='/tmp/subtitles.ass'[video_out]"))
 
     def test_graph_rejects_invalid_strength(self):
         with self.assertRaisesRegex(ValueError, "At least one"):
@@ -319,6 +313,163 @@ class BeautyFilterTests(unittest.TestCase):
                 0,
                 0,
             )
+
+
+class LetterboxLayoutTests(unittest.TestCase):
+    def test_pads_are_even_and_keep_the_picture_in_the_middle(self):
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        self.assertEqual(layout["top_pad"] % 2, 0)
+        self.assertEqual(layout["bottom_pad"] % 2, 0)
+        self.assertEqual(layout["canvas_width"] % 2, 0)
+        self.assertEqual(layout["canvas_height"] % 2, 0)
+        self.assertEqual(
+            layout["canvas_height"],
+            1080 + layout["top_pad"] + layout["bottom_pad"],
+        )
+        self.assertGreater(layout["progress_label_y"], 0)
+        self.assertLess(layout["progress_label_y"], layout["top_pad"])
+        self.assertGreater(layout["zh_y"], 1080 + layout["top_pad"])
+        self.assertLess(layout["zh_y"], layout["canvas_height"])
+        self.assertGreater(layout["en_y"], layout["zh_y"])
+        self.assertLess(layout["en_y"], layout["canvas_height"])
+        self.assertEqual(
+            BURN_SUBTITLES.letterbox_pad_filter(layout),
+            f"pad={layout['canvas_width']}:{layout['canvas_height']}:0:{layout['top_pad']}:black",
+        )
+
+    def test_burned_ass_has_no_running_clock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "no_clock.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 2.5, "text": "你好", "en": "Hello"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                duration=2.5,
+                bilingual=True,
+            )
+            content = path.read_text(encoding="utf-8")
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertNotIn(",Timestamp,", content)
+        self.assertIn("你好", content)
+        self.assertIn("Hello", content)
+
+
+class ChapterTitleFitTests(unittest.TestCase):
+    def test_short_title_stays_intact(self):
+        self.assertEqual(BURN_SUBTITLES.fit_chapter_title("开场", 8), "开场")
+
+    def test_long_title_in_narrow_slot_uses_ellipsis_on_one_line(self):
+        title = "这是一段非常非常长的核心方法说明标题"
+        fitted = BURN_SUBTITLES.fit_chapter_title(title, 6)
+        self.assertIn("…", fitted)
+        self.assertNotIn("\n", fitted)
+        self.assertLess(len(fitted), len(title))
+        self.assertLessEqual(BURN_SUBTITLES._visual_len(fitted), 6.01)
+
+    def test_narrow_chapter_slot_ellipsizes_in_ass(self):
+        chapters = [
+            {"title": "开头", "start": 0.0, "end": 90.0},
+            {"title": "这是一段非常非常长的核心方法说明标题", "start": 90.0, "end": 105.0},
+            {"title": "结尾", "start": 105.0, "end": 181.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ellipsis.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 1.0, "text": "测试"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                chapters=chapters,
+                duration=181.0,
+            )
+            content = path.read_text(encoding="utf-8")
+        labels = [line for line in content.splitlines() if line.startswith("Dialogue") and "ProgressLabel" in line]
+        self.assertEqual(len(labels), 3)
+        self.assertIn("开头", labels[0])
+        self.assertIn("…", labels[1])
+        self.assertNotIn("这是一段非常非常长的核心方法说明标题", labels[1])
+        self.assertNotIn("\\N", labels[1])
+        self.assertIn("结尾", labels[2])
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, progress=True)
+        slot_px = int(1920 * 15.0 / 181.0)
+        fitted = BURN_SUBTITLES.fit_chapter_title(
+            chapters[1]["title"],
+            BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"]),
+        )
+        self.assertEqual(fitted, labels[1].rsplit("}", 1)[-1])
+        self.assertLessEqual(
+            BURN_SUBTITLES._visual_len(fitted) * layout["progress_font"],
+            slot_px,
+        )
+
+    def test_newlines_and_spaces_collapse_to_one_line(self):
+        self.assertEqual(
+            BURN_SUBTITLES.fit_chapter_title("  开场\n说明  ", 12),
+            "开场 说明",
+        )
+
+
+class BilingualAssTests(unittest.TestCase):
+    def test_chinese_sits_above_english_in_the_bottom_bar(self):
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bilingual.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 2.0, "text": "欢迎回来", "en": "Welcome back"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                bilingual=True,
+                duration=2.0,
+            )
+            content = path.read_text(encoding="utf-8")
+        self.assertIn("&H00FFFFFF", content)
+        self.assertIn("欢迎回来", content)
+        self.assertIn("Welcome back", content)
+        zh_line = next(line for line in content.splitlines() if "CaptionZh" in line and "欢迎回来" in line)
+        en_line = next(line for line in content.splitlines() if "CaptionEn" in line and "Welcome back" in line)
+        zh_y = int(zh_line.split("pos(")[1].split(")")[0].split(",")[1])
+        en_y = int(en_line.split("pos(")[1].split(")")[0].split(",")[1])
+        self.assertEqual(zh_y, layout["zh_y"])
+        self.assertEqual(en_y, layout["en_y"])
+        self.assertGreater(en_y, zh_y)
+        self.assertGreater(zh_y, 1080 + layout["top_pad"])
+
+    def test_translate_caption_lines_keeps_existing_english(self):
+        lines = [
+            {"start": 0.0, "end": 1.0, "text": "你好", "en": "Hi"},
+            {"start": 1.0, "end": 2.0, "text": "世界"},
+        ]
+        translated = BURN_SUBTITLES.translate_caption_lines(
+            lines,
+            translator=lambda texts: [f"EN:{item}" for item in texts],
+        )
+        self.assertEqual(translated[0]["en"], "Hi")
+        self.assertEqual(translated[1]["en"], "EN:世界")
+
+    def test_merge_english_srt_pairs_by_index(self):
+        chinese = [{"start": 0.0, "end": 1.0, "text": "你好"}]
+        english = [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+        merged = BURN_SUBTITLES.merge_english_srt(chinese, english)
+        self.assertEqual(merged[0]["en"], "Hello")
+
+
+class SingleLineWrapTests(unittest.TestCase):
+    def test_long_caption_stays_one_line_within_letterbox_width(self):
+        text = "今天我们继续讲解 Claude Code 和 GPT 的实战用法"
+        max_chars = BURN_SUBTITLES._resolve_effective_max_chars(0, 1920, 1080, False)
+        wrapped = BURN_SUBTITLES._wrap_display_text(text, max_chars)
+        self.assertNotIn("\n", wrapped)
+        self.assertLessEqual(BURN_SUBTITLES._visual_len(wrapped), max_chars)
+
+    def test_overlong_caption_wraps_only_as_a_last_resort(self):
+        text = "这是一句非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的中文字幕用于验证限宽"
+        max_chars = 16
+        wrapped = BURN_SUBTITLES._wrap_display_text(text, max_chars)
+        self.assertIn("\n", wrapped)
+        for part in wrapped.split("\n"):
+            self.assertLessEqual(BURN_SUBTITLES._visual_len(part), max_chars + 0.01)
 
 
 if __name__ == "__main__":

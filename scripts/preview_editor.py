@@ -119,42 +119,57 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     min-height: 0;
     background: #000;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
     overflow: hidden;
     position: relative;
   }
-  .video-wrap video { width: 100%; height: 100%; object-fit: contain; }
+  .video-stage {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+  }
+  .letterbox-top, .letterbox-bottom {
+    position: relative;
+    flex: 0 0 12%;
+    background: #000;
+    z-index: 8;
+  }
+  .letterbox-bottom { flex-basis: 18%; }
+  .video-stage video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
   .current-subtitle {
     position: absolute;
     z-index: 7;
-    bottom: 4.5%;
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 90%;
+    inset: 8% 6% 10%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
     text-align: center;
     font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    font-size: clamp(13px, 2.2vw, 22px);
-    line-height: 1.5;
+    font-size: clamp(14px, 2.2vw, 24px);
+    line-height: 1.25;
     color: #ffffff;
-    background: rgba(26, 26, 28, 0.76);
-    padding: 4px 10px;
-    border-radius: 4px;
+    background: transparent;
     pointer-events: none;
-    white-space: pre-wrap;
-    word-break: break-word;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
-    display: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .current-subtitle.visible { display: block; }
-  .current-subtitle-zh { font-size: 1em; font-weight: 600; line-height: 1.34; }
+  .current-subtitle.visible { display: flex; }
+  .current-subtitle-zh { font-size: 1em; font-weight: 600; line-height: 1.28; color: #ffffff; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .current-subtitle-en {
-    margin-top: 1px;
-    color: rgba(255,255,255,.90);
+    margin-top: 4px;
+    color: #ffffff;
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-size: .78em;
+    font-size: .72em;
     font-weight: 500;
     line-height: 1.28;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .bilingual-mode .current-subtitle { text-shadow: none; }
   .sub-text-zh { color: #16161f; font-size: 14px; line-height: 1.55; }
@@ -167,44 +182,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .content-progress {
     position: absolute;
     z-index: 5;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    height: clamp(56px, 9vh, 76px);
+    inset: 0;
     display: none;
     overflow: hidden;
-    background: linear-gradient(
-      to bottom,
-      rgba(47,47,49,0) 0%,
-      rgba(47,47,49,.20) 34%,
-      rgba(47,47,49,.72) 100%
-    );
+    background: transparent;
     pointer-events: none;
   }
   .content-progress.visible { display: block; }
-  .video-pane.has-progress .current-subtitle { bottom: 12%; }
+  .video-pane.has-progress .letterbox-top { flex-basis: 16%; }
   .content-progress-fill {
     position: absolute;
     z-index: 1;
-    top: auto;
+    top: 0;
     bottom: 0;
     left: 0;
-    height: 3px;
+    height: auto;
     width: 0;
-    background: #ffffff;
+    background: rgba(200, 200, 200, 0.42);
   }
-  .content-progress-markers { position: absolute; z-index: 2; inset: 34% 0 3px; }
+  .content-progress-markers { position: absolute; z-index: 2; inset: 0; }
   .content-progress-marker {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 2px;
-    background: rgba(255,255,255,.22);
+    background: rgba(180,180,180,.35);
   }
   .content-progress-labels {
     position: absolute;
     z-index: 3;
-    inset: 32% 0 4px;
+    inset: 0;
   }
   .content-progress-label {
     position: absolute;
@@ -215,8 +222,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     justify-content: center;
     overflow: hidden;
     padding: 0 8px;
-    color: rgba(255,255,255,.94);
-    font-size: 13px;
+    color: #b4b4b4;
+    font-size: clamp(14px, 2.2vw, 28px);
     font-weight: 600;
     line-height: 1;
     letter-spacing: .02em;
@@ -522,12 +529,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="main">
   <div class="video-pane" id="videoPaneEl">
     <div class="video-wrap">
-      <video id="vid" controls src="/video"></video>
-      <div class="current-subtitle" id="curSub"></div>
-      <div class="content-progress" id="contentProgress">
-        <div class="content-progress-fill" id="contentProgressFill"></div>
-        <div class="content-progress-markers" id="contentProgressMarkers"></div>
-        <div class="content-progress-labels" id="contentProgressLabels"></div>
+      <div class="video-stage">
+        <div class="letterbox-top">
+          <div class="content-progress" id="contentProgress">
+            <div class="content-progress-fill" id="contentProgressFill"></div>
+            <div class="content-progress-markers" id="contentProgressMarkers"></div>
+            <div class="content-progress-labels" id="contentProgressLabels"></div>
+          </div>
+        </div>
+        <video id="vid" controls src="/video"></video>
+        <div class="letterbox-bottom">
+          <div class="current-subtitle" id="curSub"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -819,7 +832,9 @@ vid.addEventListener('timeupdate', () => {
   syncCurSub();
   updateContentProgress(vid.currentTime);
 });
-vid.addEventListener('loadedmetadata', setupContentProgress);
+vid.addEventListener('loadedmetadata', () => {
+  setupContentProgress();
+});
 
 // ── render ──────────────────────────────────────────────────────────────────
 function render() {

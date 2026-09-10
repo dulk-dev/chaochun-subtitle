@@ -58,8 +58,46 @@ class SubtitlePreparationTests(unittest.TestCase):
             chapter_payload = json.loads(chapters.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["subtitle_mode"], "zh")
+        self.assertFalse(payload.get("bilingual"))
         self.assertEqual(payload["segments"][0]["text"], "你好世界")
         self.assertFalse(chapter_payload["enabled"])
+
+    def test_english_fields_mark_the_preview_as_bilingual(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "transcript.json"
+            output = root / "subtitle-transcript.json"
+            chapters = root / "subtitle-chapters.json"
+            transcript.write_text(
+                json.dumps(
+                    [{"start": 0.0, "end": 2.0, "text": "你好", "en": "Hello"}],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            argv = [
+                "prepare_subtitles.py",
+                "--transcript",
+                str(transcript),
+                "--output",
+                str(output),
+                "--chapters-output",
+                str(chapters),
+                "--work-dir",
+                str(root / "cache"),
+            ]
+            with patch.dict(
+                os.environ,
+                {"OIL_SUBTITLE_CONFIG": str(root / "missing.json")},
+                clear=False,
+            ), patch.object(sys, "argv", argv), patch.object(
+                PREPARE, "model_json", side_effect=AssertionError("unexpected call")
+            ):
+                PREPARE.main()
+            payload = json.loads(output.read_text(encoding="utf-8"))
+        self.assertTrue(payload["bilingual"])
+        self.assertEqual(payload["segments"][0]["zh"], "你好")
+        self.assertEqual(payload["segments"][0]["en"], "Hello")
 
     def test_progress_threshold_defaults_to_three_minutes(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -17,24 +17,48 @@ SPEC.loader.exec_module(PREVIEW_EDITOR)
 
 class ProgressLayoutTests(unittest.TestCase):
     def test_progress_is_inside_the_video_overlay(self):
-        self.assertIn(
-            '<div class="current-subtitle" id="curSub"></div>\n'
-            '      <div class="content-progress" id="contentProgress">',
-            PREVIEW_EDITOR.HTML_TEMPLATE,
+        self.assertNotIn('id="burnTimestamp"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('class="letterbox-top"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('class="letterbox-bottom"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn('id="contentProgress"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertLess(
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('class="letterbox-top"'),
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('id="vid"'),
+        )
+        self.assertLess(
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('id="vid"'),
+            PREVIEW_EDITOR.HTML_TEMPLATE.index('class="letterbox-bottom"'),
         )
 
-    def test_progress_uses_a_transparent_bottom_gradient(self):
-        match = re.search(
+    def test_preview_progress_is_light_gray_in_the_top_bar(self):
+        progress = re.search(
             r"\.content-progress\s*\{(?P<rules>.*?)\}",
             PREVIEW_EDITOR.HTML_TEMPLATE,
             re.DOTALL,
         )
-        self.assertIsNotNone(match)
-        rules = match.group("rules")
-        self.assertIn("position: absolute", rules)
-        self.assertIn("bottom: 0", rules)
-        self.assertIn("linear-gradient", rules)
-        self.assertIn("rgba(47,47,49,0)", rules)
+        fill = re.search(
+            r"\.content-progress-fill\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        label = re.search(
+            r"\.content-progress-label\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(progress)
+        self.assertIsNotNone(fill)
+        self.assertIsNotNone(label)
+        self.assertIn("inset: 0", progress.group("rules"))
+        self.assertIn("rgba(200, 200, 200, 0.42)", fill.group("rules"))
+        self.assertIn("top: 0", fill.group("rules"))
+        self.assertIn("bottom: 0", fill.group("rules"))
+        self.assertNotIn("height: 6px", fill.group("rules"))
+        self.assertNotIn("background: #c8c8c8", fill.group("rules"))
+        self.assertIn("color: #b4b4b4", label.group("rules"))
+        self.assertIn("text-overflow: ellipsis", label.group("rules"))
+        self.assertIn("white-space: nowrap", label.group("rules"))
+        self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
 
 
 class ManualGlossaryHookTests(unittest.TestCase):

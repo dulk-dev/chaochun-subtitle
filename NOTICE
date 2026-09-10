@@ -1,0 +1,18 @@
+chaochun-subtitle
+=================
+
+This repository is a derivative fork/extension of:
+
+    oil-subtitle
+    https://github.com/oil-oil/oil-subtitle
+
+The upstream project is authored and maintained by oil-oil and contributors.
+chaochun-subtitle keeps the original ASR → review → preview → FFmpeg burn
+pipeline and adds a letterbox bilingual burned-in layout.
+
+Upstream GitHub currently does not declare a license field. This fork still
+attributes the original work, preserves copyright notices present in the
+imported sources, and does not claim authorship of the upstream code.
+
+If you use, copy, or redistribute this skill, please retain this notice and
+the upstream project link.
