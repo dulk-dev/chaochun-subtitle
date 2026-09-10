@@ -132,9 +132,11 @@ class ProgressBarTests(unittest.TestCase):
         self.assertIn("正文", labels[1])
         layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=False, progress=True)
         for line in labels:
-            self.assertIn(f"pos(", line)
+            self.assertIn("\\q2", line)
             y = int(line.split("pos(")[1].split(")")[0].split(",")[1])
             self.assertLess(y, layout["top_pad"])
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertNotRegex(content, r"Dialogue: 0,.*Timestamp")
 
     def test_progress_bar_lives_in_the_top_letterbox(self):
         chapters = [
@@ -156,9 +158,16 @@ class ProgressBarTests(unittest.TestCase):
         layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=False, progress=True)
         self.assertIn(f"PlayResY: {layout['canvas_height']}", content)
         self.assertGreater(layout["canvas_height"], 1080)
-        self.assertIn("Style: Timestamp,", content)
-        self.assertIn(BURN_SUBTITLES._TIMESTAMP_PRIMARY_COLOUR, content)
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertGreater(layout["progress_font"], BURN_SUBTITLES._UPSTREAM_PROGRESS_FONT_1080P)
+        self.assertIn(
+            f"Style: ProgressLabel,{BURN_SUBTITLES._caption_font_name()},{layout['progress_font']},"
+            f"{BURN_SUBTITLES._PROGRESS_LABEL_COLOUR}",
+            content,
+        )
         self.assertIn("ProgressFill", content)
+        self.assertIn("ProgressTrack", content)
+        self.assertIn(BURN_SUBTITLES._PROGRESS_FILL_COLOUR, content)
         fill_lines = [line for line in content.splitlines() if "ProgressFill" in line]
         self.assertTrue(fill_lines)
         fill_y = int(fill_lines[0].split("pos(0,")[1].split(")")[0])
@@ -313,8 +322,8 @@ class LetterboxLayoutTests(unittest.TestCase):
             layout["canvas_height"],
             1080 + layout["top_pad"] + layout["bottom_pad"],
         )
-        self.assertGreater(layout["timestamp_y"], 0)
-        self.assertLess(layout["timestamp_y"], layout["top_pad"])
+        self.assertGreater(layout["progress_label_y"], 0)
+        self.assertLess(layout["progress_label_y"], layout["top_pad"])
         self.assertGreater(layout["zh_y"], 1080 + layout["top_pad"])
         self.assertLess(layout["zh_y"], layout["canvas_height"])
         self.assertGreater(layout["en_y"], layout["zh_y"])
@@ -324,14 +333,9 @@ class LetterboxLayoutTests(unittest.TestCase):
             f"pad={layout['canvas_width']}:{layout['canvas_height']}:0:{layout['top_pad']}:black",
         )
 
-    def test_timestamp_is_light_gray_and_larger_than_upstream_default(self):
-        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080)
-        self.assertGreater(
-            layout["timestamp_font"],
-            BURN_SUBTITLES._UPSTREAM_TIMESTAMP_FONT_1080P,
-        )
+    def test_burned_ass_has_no_running_clock(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "clock.ass"
+            path = Path(tmp) / "no_clock.ass"
             BURN_SUBTITLES.generate_ass(
                 [{"start": 0.0, "end": 2.5, "text": "你好", "en": "Hello"}],
                 path,
@@ -341,14 +345,65 @@ class LetterboxLayoutTests(unittest.TestCase):
                 bilingual=True,
             )
             content = path.read_text(encoding="utf-8")
-        self.assertIn(
-            f"Style: Timestamp,{BURN_SUBTITLES._caption_font_name()},{layout['timestamp_font']},"
-            f"{BURN_SUBTITLES._TIMESTAMP_PRIMARY_COLOUR}",
-            content,
+        self.assertNotIn("Style: Timestamp,", content)
+        self.assertNotIn(",Timestamp,", content)
+        self.assertIn("你好", content)
+        self.assertIn("Hello", content)
+
+
+class ChapterTitleFitTests(unittest.TestCase):
+    def test_short_title_stays_intact(self):
+        self.assertEqual(BURN_SUBTITLES.fit_chapter_title("开场", 8), "开场")
+
+    def test_long_title_in_narrow_slot_uses_ellipsis_on_one_line(self):
+        title = "这是一段非常非常长的核心方法说明标题"
+        fitted = BURN_SUBTITLES.fit_chapter_title(title, 6)
+        self.assertIn("…", fitted)
+        self.assertNotIn("\n", fitted)
+        self.assertLess(len(fitted), len(title))
+        self.assertLessEqual(BURN_SUBTITLES._visual_len(fitted), 6.01)
+
+    def test_narrow_chapter_slot_ellipsizes_in_ass(self):
+        chapters = [
+            {"title": "开头", "start": 0.0, "end": 90.0},
+            {"title": "这是一段非常非常长的核心方法说明标题", "start": 90.0, "end": 105.0},
+            {"title": "结尾", "start": 105.0, "end": 181.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ellipsis.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 1.0, "text": "测试"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                chapters=chapters,
+                duration=181.0,
+            )
+            content = path.read_text(encoding="utf-8")
+        labels = [line for line in content.splitlines() if line.startswith("Dialogue") and "ProgressLabel" in line]
+        self.assertEqual(len(labels), 3)
+        self.assertIn("开头", labels[0])
+        self.assertIn("…", labels[1])
+        self.assertNotIn("这是一段非常非常长的核心方法说明标题", labels[1])
+        self.assertNotIn("\\N", labels[1])
+        self.assertIn("结尾", labels[2])
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, progress=True)
+        slot_px = int(1920 * 15.0 / 181.0)
+        fitted = BURN_SUBTITLES.fit_chapter_title(
+            chapters[1]["title"],
+            BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"]),
         )
-        self.assertIn("00:00", content)
-        self.assertIn("00:01", content)
-        self.assertIn("00:02", content)
+        self.assertEqual(fitted, labels[1].rsplit("}", 1)[-1])
+        self.assertLessEqual(
+            BURN_SUBTITLES._visual_len(fitted) * layout["progress_font"],
+            slot_px,
+        )
+
+    def test_newlines_and_spaces_collapse_to_one_line(self):
+        self.assertEqual(
+            BURN_SUBTITLES.fit_chapter_title("  开场\n说明  ", 12),
+            "开场 说明",
+        )
 
 
 class BilingualAssTests(unittest.TestCase):

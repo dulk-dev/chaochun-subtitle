@@ -139,19 +139,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .letterbox-bottom { flex-basis: 18%; }
   .video-stage video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
-  .burn-timestamp {
-    position: absolute;
-    z-index: 9;
-    left: 50%;
-    top: 42%;
-    transform: translate(-50%, -50%);
-    color: #b4b4b4;
-    font-variant-numeric: tabular-nums;
-    font-size: clamp(18px, 2.6vw, 32px);
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    pointer-events: none;
-  }
   .current-subtitle {
     position: absolute;
     z-index: 7;
@@ -195,10 +182,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .content-progress {
     position: absolute;
     z-index: 5;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    height: 46%;
+    inset: 0;
     display: none;
     overflow: hidden;
     background: transparent;
@@ -212,22 +196,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     top: auto;
     bottom: 0;
     left: 0;
-    height: 3px;
+    height: 6px;
     width: 0;
-    background: #ffffff;
+    background: #c8c8c8;
   }
-  .content-progress-markers { position: absolute; z-index: 2; inset: 34% 0 3px; }
+  .content-progress-markers { position: absolute; z-index: 2; inset: 18% 0 6px; }
   .content-progress-marker {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 2px;
-    background: rgba(255,255,255,.22);
+    background: rgba(180,180,180,.35);
   }
   .content-progress-labels {
     position: absolute;
     z-index: 3;
-    inset: 32% 0 4px;
+    inset: 0 0 8px;
   }
   .content-progress-label {
     position: absolute;
@@ -238,8 +222,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     justify-content: center;
     overflow: hidden;
     padding: 0 8px;
-    color: rgba(255,255,255,.94);
-    font-size: 13px;
+    color: #b4b4b4;
+    font-size: clamp(14px, 2.2vw, 28px);
     font-weight: 600;
     line-height: 1;
     letter-spacing: .02em;
@@ -547,7 +531,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="video-wrap">
       <div class="video-stage">
         <div class="letterbox-top">
-          <div class="burn-timestamp" id="burnTimestamp">00:00</div>
           <div class="content-progress" id="contentProgress">
             <div class="content-progress-fill" id="contentProgressFill"></div>
             <div class="content-progress-markers" id="contentProgressMarkers"></div>
@@ -634,7 +617,6 @@ const contentProgress = document.getElementById('contentProgress');
 const contentProgressFill = document.getElementById('contentProgressFill');
 const contentProgressMarkers = document.getElementById('contentProgressMarkers');
 const contentProgressLabels = document.getElementById('contentProgressLabels');
-const burnTimestamp = document.getElementById('burnTimestamp');
 
 // ── find bar toggle (Ctrl+F) ──────────────────────────────────────────────────
 const findBarEl = document.getElementById('findBar');
@@ -684,25 +666,6 @@ function fmtSeg(seg) {
     return `${m}:${sec}`;
   };
   return `${fmt(seg.start)} → ${fmt(seg.end)}`;
-}
-
-function formatClock(seconds, duration) {
-  const total = Math.max(0, Math.floor(seconds || 0));
-  if ((duration || 0) >= 3600) {
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function updateBurnTimestamp(time) {
-  if (!burnTimestamp) return;
-  const duration = Number(manifest?.duration || vid.duration || 0);
-  burnTimestamp.textContent = formatClock(time, duration);
 }
 
 function getVisibleSegments() {
@@ -783,7 +746,6 @@ async function init() {
   const src = langs.find(l => l.source) || langs[0];
   await switchLang(src.code);
   setupContentProgress();
-  updateBurnTimestamp(vid.currentTime || 0);
 }
 
 function buildTabs(langs) {
@@ -869,11 +831,9 @@ vid.addEventListener('timeupdate', () => {
   }
   syncCurSub();
   updateContentProgress(vid.currentTime);
-  updateBurnTimestamp(vid.currentTime);
 });
 vid.addEventListener('loadedmetadata', () => {
   setupContentProgress();
-  updateBurnTimestamp(vid.currentTime || 0);
 });
 
 // ── render ──────────────────────────────────────────────────────────────────
@@ -970,7 +930,6 @@ function render() {
       // Immediately show this subtitle without waiting for timeupdate
       renderCurrentSubtitle(seg);
       updateContentProgress(seg.start);
-      updateBurnTimestamp(seg.start);
     });
 
     item.appendChild(check);

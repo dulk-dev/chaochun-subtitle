@@ -4,11 +4,11 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="chaochun-subtitle 将本地视频转换为可校对并烧录的中英字幕">
 </p>
 
-**chaochun-subtitle** 是开源 skill [oil-subtitle](https://github.com/oil-oil/oil-subtitle) 的派生拓展，不是从零重写。上游由 [oil-oil](https://github.com/oil-oil) 及贡献者完成 ASR、术语纠错、人工预览、章节和 FFmpeg 烧录；本仓在此基础上改默认成片观感，面向需要上下黑边、时间戳和中英同屏烧录的成片。
+**chaochun-subtitle** 是开源 skill [oil-subtitle](https://github.com/oil-oil/oil-subtitle) 的派生拓展，不是从零重写。上游由 [oil-oil](https://github.com/oil-oil) 及贡献者完成 ASR、术语纠错、人工预览、章节和 FFmpeg 烧录；本仓在此基础上改默认成片观感，面向需要上下黑边、章节进度条和中英同屏烧录的成片。
 
 上游仓库的 GitHub `license` 字段目前为空。本 fork 仍明确致谢原作者与上游版权，详见 [NOTICE](NOTICE) 与下方「上游致谢」。
 
-把已经导出的 MP4、MOV 交给 Agent，依次完成转录、术语纠错、人工预览、章节生成和 FFmpeg 烧录。默认烧录 **letterbox 双语成片**：原画面居中，上下加黑边；**上方浅灰时间戳**（比上游进度标签默认字号更大），**下方中英白字同屏**（中文在上、英文在下）。只需要一个百炼 API Key。
+把已经导出的 MP4、MOV 交给 Agent，依次完成转录、术语纠错、人工预览、章节生成和 FFmpeg 烧录。默认烧录 **letterbox 双语成片**：原画面居中，上下加黑边；**上方**是上游原来在画面底部的那种**章节进度条**（横向分区 + 浅灰进度随播放推进，标签比上游默认更大），**下方中英白字同屏**（中文在上、英文在下）。只需要一个百炼 API Key。
 
 也可以只导出英文 SRT（与上游「英文 SRT 分支」相同）：保留原时间轴，不启动预览、不生成章节、不烧录视频。
 
@@ -29,10 +29,9 @@
 | | 上游 oil-subtitle | 本 fork（chaochun-subtitle） |
 | --- | --- | --- |
 | 成片画布 | 字幕叠在原始画面内，底部 MarginV + 半透明底 | 上下黑边 letterbox，中间保留原画 |
-| 时间戳 | 无独立时钟；章节标签约 22px（1080p） | 上方黑边放浅灰运行时钟，默认明显更大 |
+| 章节进度 | 画面底部半透明渐变条，标签约 22px（1080p） | 整条迁到上方黑边；浅灰加大；短区段长标题用省略号单行截断 |
 | 字幕 | 默认只烧中文白字 | 默认中英同屏白字，中文在上、英文在下 |
 | 英文 | 单独的「英文 SRT 分支」，不进入默认烧录 | 沿用该翻译分支接到 ASS/烧录；`--no-bilingual` 可退回只烧中文 |
-| 章节进度 | 画面底部半透明渐变条 | 挪到上方黑边，避免挡住原画和字幕 |
 | 折行 | 偏保守的每行字数，容易一条变两行 | 按黑边宽度尽量单行；中英各自尽量不折行 |
 
 无法避免折行的情况：单条含超长专有名词、或英文翻译显著长于中文时，仍会按标点/词界折行，并在 SKILL 中说明这一权衡。
@@ -40,14 +39,14 @@
 ## 效果预览
 
 <p align="center">
-  <img src="./assets/readme/letterbox-bilingual-frame.png" width="100%" alt="letterbox 成片：上浅灰时间戳，下中英白字，中间为原画面">
+  <img src="./assets/readme/letterbox-bilingual-frame.png" width="100%" alt="letterbox 成片：上黑边章节进度条，下黑边中英白字，中间为原画面">
 </p>
 
 <p align="center">
   <img src="./assets/readme/subtitle-editor.png" width="100%" alt="chaochun-subtitle 本地字幕编辑器：左侧预览字幕与章节进度，右侧逐句校对">
 </p>
 
-人工预览编辑器左侧实时预览字幕（布局贴近成片：上时间戳、下字幕），右侧逐句修改、删除或批量查找替换，确认后点击「保存并关闭」即可继续烧录。中文与英文或数字之间默认补一个半角空格，预览、SRT/ASS 和最终成片使用同一规则。
+人工预览编辑器左侧实时预览字幕（布局贴近成片：上章节进度、下字幕），右侧逐句修改、删除或批量查找替换，确认后点击「保存并关闭」即可继续烧录。中文与英文或数字之间默认补一个半角空格，预览、SRT/ASS 和最终成片使用同一规则。
 
 保存时会自动比较人工修改并生成待审报告，但不会调用模型或自动写入个人错题本。Agent 只把稳定、安全且不冲突的 ASR 映射写入词库；润色、删句和标点修改不会污染词库。
 
@@ -79,7 +78,7 @@ demo_subtitled.mp4
 2. 通过 DashScope Python SDK 调用百炼 FunAudio ASR，保留原始识别结果和词级时间戳。
 3. 在识别阶段应用 hotwords，再用 glossary 修正常见误识别。
 4. 脚本原样复制转录稿并生成技术词聚焦清单；Agent 通读全部字幕，结合上下文、音频和必要画面修正错词。百炼模型不自动修改字幕正文。
-5. 用 Qwen 完成字幕级断句；章节进度默认开启，视频严格超过 3 分钟时生成 2–6 个宽粒度章节，并在**上方黑边**展示进度，不压原画。
+5. 用 Qwen 完成字幕级断句；章节进度默认开启，视频严格超过 3 分钟时生成 2–6 个宽粒度章节，并在**上方黑边**展示横向分区进度条，不压原画和字幕。区段太窄、标题太长时用省略号截断为单行。
 6. 启动本地字幕编辑器，由用户检查 Agent 校对结果，并按需修改或删除字幕。
 7. 保存时自动提取人工修改并生成待审报告；Agent 判断是否需要显式加入个人 glossary，脚本不会自动写入。
 8. 生成中文 SRT、英文 SRT、ASS，并用 FFmpeg **pad 上下黑边**后一次烧录成片。烧录前若还没有英文，则按上游英文翻译规则逐条译出并写入 ASS。
@@ -211,19 +210,22 @@ mkdir -p "$WORK"
 
 ### 用合成画面复现 letterbox 成片
 
-不跑百炼 ASR 也可以验证布局：
+不跑百炼 ASR 也可以验证布局。演示短片默认不到 3 分钟，章节 JSON 需设 `"min_progress_duration": 0` 才会画出上黑边进度条（正式成片仍是严格超过 3 分钟才显示）：
 
 ```bash
-ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=25:duration=3 \
+ffmpeg -f lavfi -i smptebars=size=1280x720:rate=25:duration=3 \
   -pix_fmt yuv420p /tmp/colorbar.mp4
-# 准备含 zh / en 的 fixture JSON 后：
+# 准备含 zh / en 的 fixture JSON，以及 enabled 章节 JSON 后：
 python3 scripts/burn_subtitles.py \
   --video /tmp/colorbar.mp4 \
   --transcript /tmp/fixture.json \
+  --chapters /tmp/chapters.json \
   --output /tmp/colorbar_subtitled.mp4 \
-  --no-beauty --no-progress
-ffmpeg -ss 1.2 -i /tmp/colorbar_subtitled.mp4 -frames:v 1 letterbox-frame.png
+  --no-beauty
+ffmpeg -ss 1.35 -i /tmp/colorbar_subtitled.mp4 -frames:v 1 letterbox-frame.png
 ```
+
+只要中文、或故意关掉进度条时再加 `--no-bilingual` / `--no-progress`。
 
 ## 适用边界
 

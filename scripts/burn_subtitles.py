@@ -3,8 +3,8 @@
 Burn subtitles onto an exported video using ffmpeg.
 Converts transcript.json (from local_transcribe.py or another ASR) → ASS subtitle file → burned video.
 
-Default chaochun layout: letterbox (black bars), light-gray timestamp on top,
-white bilingual captions (Chinese above English) in the bottom bar.
+Default chaochun layout: letterbox (black bars), chapter progress in the top
+bar, white bilingual captions (Chinese above English) in the bottom bar.
 """
 
 import argparse
@@ -26,8 +26,10 @@ from user_config import resolve_progress_enabled
 
 _DISPLAY_REPLACEMENTS: list[tuple[re.Pattern, str]] = []
 _SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.92
-_UPSTREAM_TIMESTAMP_FONT_1080P = 22
-_TIMESTAMP_PRIMARY_COLOUR = "&H00B4B4B4&"
+_UPSTREAM_PROGRESS_FONT_1080P = 22
+_PROGRESS_LABEL_COLOUR = "&H00B4B4B4&"
+_PROGRESS_FILL_COLOUR = "&H00C8C8C8&"
+_PROGRESS_TRACK_COLOUR = "&H005A5A5A&"
 _CAPTION_PRIMARY_COLOUR = "&H00FFFFFF&"
 _DEFAULT_BEAUTY_STRENGTH_PERCENT = 10.0
 _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
@@ -85,7 +87,12 @@ def _visual_len(text: str) -> float:
     """Visual width estimate: CJK = 1.0, Latin/digits/punct = 0.55, space = 0.5."""
     w = 0.0
     for c in text:
-        if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf' or '\u3000' <= c <= '\u303f':
+        if (
+            '\u4e00' <= c <= '\u9fff'
+            or '\u3400' <= c <= '\u4dbf'
+            or '\u3000' <= c <= '\u303f'
+            or c == '…'
+        ):
             w += 1.0
         elif c == ' ':
             w += 0.5
@@ -561,22 +568,29 @@ def letterbox_layout(
 ) -> dict:
     """Compute even letterbox pads and text anchors for the burned frame.
 
-    Original picture stays unscaled in the middle. Timestamp sits in the top
-    black bar; bilingual captions sit in the bottom black bar.
+    Original picture stays unscaled in the middle. Chapter progress (when
+    enabled) occupies the top black bar; bilingual captions sit in the bottom
+    black bar.
     """
     content_width = _even_dimension(content_width)
     content_height = _even_dimension(content_height)
     is_portrait = content_height > content_width
-    timestamp_font = max(32, int(content_height * (0.034 if is_portrait else 0.038)))
     zh_font = max(40, int(content_height * (0.034 if is_portrait else 0.042)))
     en_font = max(24, int(round(zh_font * 0.70))) if bilingual else 0
-    progress_font = max(18, int(timestamp_font * 0.52)) if progress else 12
-    progress_line_height = max(3, int(round(content_height * 0.003)))
-
-    top_inner = int(timestamp_font * 1.90)
+    progress_font = (
+        max(28, int(content_height * (0.026 if is_portrait else 0.030)))
+        if progress
+        else 12
+    )
+    progress_line_height = max(6, int(round(content_height * 0.007))) if progress else 0
+    if progress_line_height % 2:
+        progress_line_height += 1
     if progress:
-        top_inner = int(timestamp_font * 1.45) + max(32, int(content_height * 0.038))
-    top_pad = _even_dimension(max(72, top_inner))
+        top_pad = _even_dimension(
+            max(80, int(progress_font * 1.70) + progress_line_height + 18)
+        )
+    else:
+        top_pad = _even_dimension(max(48, int(content_height * 0.044)))
 
     zh_line = int(zh_font * 1.20)
     en_line = int(en_font * 1.22) if bilingual else 0
@@ -589,9 +603,8 @@ def letterbox_layout(
         bottom_pad += 1
         canvas_height += 1
 
-    timestamp_y = int(round(top_pad * (0.36 if progress else 0.50)))
-    progress_label_y = int(round(top_pad * 0.70))
     progress_line_y = top_pad - progress_line_height
+    progress_label_y = max(progress_font, (top_pad - progress_line_height) // 2)
 
     stack_height = zh_line + stack_gap + en_line
     stack_top = content_height + top_pad + max(0, int((bottom_pad - stack_height) / 2))
@@ -605,12 +618,10 @@ def letterbox_layout(
         "bottom_pad": bottom_pad,
         "canvas_width": content_width,
         "canvas_height": canvas_height,
-        "timestamp_font": timestamp_font,
         "zh_font": zh_font,
         "en_font": en_font,
         "progress_font": progress_font,
         "progress_line_height": progress_line_height,
-        "timestamp_y": timestamp_y,
         "progress_label_y": progress_label_y,
         "progress_line_y": progress_line_y,
         "zh_y": zh_y,
@@ -716,35 +727,47 @@ def load_progress_chapters(
     return chapters
 
 
-def format_clock(seconds: float, duration: float) -> str:
-    """Format a running on-screen timestamp for the current playback second."""
-    total = max(0, int(seconds))
-    if duration >= 3600:
-        hours, remainder = divmod(total, 3600)
-        minutes, secs = divmod(remainder, 60)
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    minutes, secs = divmod(total, 60)
-    return f"{minutes:02d}:{secs:02d}"
+def fit_chapter_title(title: str, max_visual: float) -> str:
+    """Keep a chapter label on one line; ellipsize when the slot is too narrow.
+
+    Scrolling/marquee of the full title is not burned in. libass has no stable
+    loop primitive, glyph widths are estimated, and chapter durations vary, so
+    ``\\move`` + ``\\clip`` would be fragile across players. Ellipsis is the
+    deterministic fallback.
+    """
+    title = re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
+    if max_visual <= 0:
+        return ""
+    if _visual_len(title) <= max_visual:
+        return title
+    ellipsis = "…"
+    ellipsis_w = _visual_len(ellipsis)
+    if max_visual <= ellipsis_w:
+        return ellipsis
+    budget = max_visual - ellipsis_w
+    cut = 0
+    width = 0.0
+    for index, char in enumerate(title):
+        char_w = _visual_len(char)
+        if width + char_w > budget:
+            break
+        width += char_w
+        cut = index + 1
+    if cut <= 0:
+        return ellipsis
+    return title[:cut].rstrip() + ellipsis
 
 
-def _timestamp_events(duration: float, layout: dict) -> list[str]:
-    """Emit one light-gray clock event per second in the top letterbox."""
-    duration = max(duration, 0.01)
-    ticks = max(1, int(math.ceil(duration)))
-    x = layout["canvas_width"] // 2
-    y = layout["timestamp_y"]
-    events = []
-    for tick in range(ticks):
-        start = float(tick)
-        end = min(duration, tick + 1.0)
-        if end <= start:
-            continue
-        events.append(
-            f"Dialogue: 0,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},"
-            f"Timestamp,,0,0,0,,"
-            f"{{\\an5\\pos({x},{y})}}{format_clock(start, duration)}"
-        )
-    return events
+def chapter_slot_max_visual(slot_width_px: int, font_size: int) -> float:
+    """Visual-width budget for a chapter title inside its progress slot.
+
+    ASS CJK glyphs are about one em wide. A 0.72 em factor overflowed short
+    slots, so the clip box cut through the label instead of showing a clean
+    ellipsis inside the section.
+    """
+    pad = max(10, int(font_size * 0.40))
+    usable = max(1, int(slot_width_px) - pad * 2)
+    return usable / max(1.0, float(font_size))
 
 
 def _progress_events(
@@ -753,40 +776,57 @@ def _progress_events(
     """Draw chapter progress in the top letterbox, never over the picture."""
     if not chapters:
         return [], 0, layout.get("progress_font", 12)
+    duration = max(duration, 0.01)
     video_width = layout["canvas_width"]
     progress_line_height = layout["progress_line_height"]
     line_y = layout["progress_line_y"]
     label_y = layout["progress_label_y"]
-    events = []
+    font_size = layout["progress_font"]
+    events = [
+        (
+            f"Dialogue: 0,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
+            f"CaptionBox,ProgressTrack,0,0,0,,"
+            f"{{\\an7\\pos(0,{line_y})\\p1\\1c{_PROGRESS_TRACK_COLOUR}\\1a&H00&\\bord0\\shad0}}"
+            f"{_rect_path(video_width, progress_line_height)}"
+        )
+    ]
     for tick in range(int(math.ceil(duration))):
         start = float(tick)
         end = min(duration, tick + 1.0)
         fill_width = max(1, int(video_width * end / duration))
         events.append(
             f"Dialogue: 1,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},CaptionBox,ProgressFill,0,0,0,,"
-            f"{{\\an7\\pos(0,{line_y})\\p1\\1c&HFFFFFF&\\1a&H00&\\bord0\\shad0}}"
+            f"{{\\an7\\pos(0,{line_y})\\p1\\1c{_PROGRESS_FILL_COLOUR}\\1a&H00&\\bord0\\shad0}}"
             f"{_rect_path(fill_width, progress_line_height)}"
         )
     separator_width = max(2, int(video_width * 0.001))
-    marker_height = max(8, int(layout["top_pad"] * 0.22))
+    marker_height = max(10, int(layout["top_pad"] * 0.42))
     marker_y = max(0, label_y - marker_height // 2)
     for chapter in chapters[1:]:
         x = int(video_width * float(chapter["start"]) / duration)
         events.append(
             f"Dialogue: 2,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},CaptionBox,ProgressMarker,0,0,0,,"
-            f"{{\\an7\\pos({x},{marker_y})\\p1\\1c&HFFFFFF&\\1a&H90&\\bord0\\shad0}}"
+            f"{{\\an7\\pos({x},{marker_y})\\p1\\1c&HB4B4B4&\\1a&H60&\\bord0\\shad0}}"
             f"{_rect_path(separator_width, marker_height)}"
         )
     for chapter in chapters:
-        center = (float(chapter["start"]) + float(chapter["end"])) / 2
-        x = int(video_width * center / duration)
+        start_x = int(video_width * float(chapter["start"]) / duration)
+        end_x = int(video_width * float(chapter["end"]) / duration)
+        slot_width = max(1, end_x - start_x)
+        center_x = (start_x + end_x) // 2
+        label = fit_chapter_title(
+            str(chapter["title"]),
+            chapter_slot_max_visual(slot_width, font_size),
+        )
+        clip_left = start_x + max(2, int(font_size * 0.12))
+        clip_right = max(clip_left + 1, end_x - max(2, int(font_size * 0.12)))
         events.append(
             f"Dialogue: 3,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
             f"ProgressLabel,,0,0,0,,"
-            f"{{\\an5\\pos({x},{label_y})}}"
-            f"{_ass_escape(str(chapter['title']))}"
+            f"{{\\an5\\q2\\clip({clip_left},0,{clip_right},{layout['top_pad']})\\pos({center_x},{label_y})}}"
+            f"{_ass_escape(label)}"
         )
-    return events, layout["top_pad"], layout["progress_font"]
+    return events, layout["top_pad"], font_size
 
 
 def line_english_text(line: dict) -> str:
@@ -872,7 +912,7 @@ def generate_ass(lines: list[dict], output_path: Path, video_width: int = 1920,
                  video_height: int = 1080, max_chars: int = 0,
                  preserve_text: bool = False, chapters: list[dict] | None = None,
                  duration: float = 0.0, bilingual: bool = False):
-    """Generate letterbox ASS: top timestamp, bottom Chinese/English captions."""
+    """Generate letterbox ASS: top chapter progress, bottom Chinese/English captions."""
 
     chapters = chapters or []
     duration = duration or max((float(line["end"]) for line in lines), default=0.0)
@@ -901,18 +941,16 @@ def generate_ass(lines: list[dict], output_path: Path, video_width: int = 1920,
 
         [V4+ Styles]
         Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-        Style: Timestamp,{font_name},{layout['timestamp_font']},{_TIMESTAMP_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
         Style: CaptionZh,{font_name},{layout['zh_font']},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
         Style: CaptionEn,{font_name},{layout['en_font'] or max(24, int(layout['zh_font'] * 0.7))},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
         Style: CaptionBox,Arial,10,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-        Style: ProgressLabel,{font_name},{progress_font},&H10FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+        Style: ProgressLabel,{font_name},{progress_font},{_PROGRESS_LABEL_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 
         [Events]
         Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     """)
 
-    event_lines = _timestamp_events(duration, layout)
-    event_lines.extend(progress_events)
+    event_lines = list(progress_events)
     center_x = layout["canvas_width"] // 2
     for line in lines:
         start = seconds_to_ass_time(line["start"])

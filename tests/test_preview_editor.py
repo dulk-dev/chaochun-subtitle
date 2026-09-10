@@ -17,7 +17,7 @@ SPEC.loader.exec_module(PREVIEW_EDITOR)
 
 class ProgressLayoutTests(unittest.TestCase):
     def test_progress_is_inside_the_video_overlay(self):
-        self.assertIn('id="burnTimestamp"', PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn('id="burnTimestamp"', PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn('class="letterbox-top"', PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn('class="letterbox-bottom"', PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn('id="contentProgress"', PREVIEW_EDITOR.HTML_TEMPLATE)
@@ -30,23 +30,31 @@ class ProgressLayoutTests(unittest.TestCase):
             PREVIEW_EDITOR.HTML_TEMPLATE.index('class="letterbox-bottom"'),
         )
 
-    def test_preview_timestamp_is_light_gray_and_progress_stays_in_top_bar(self):
-        timestamp = re.search(
-            r"\.burn-timestamp\s*\{(?P<rules>.*?)\}",
-            PREVIEW_EDITOR.HTML_TEMPLATE,
-            re.DOTALL,
-        )
+    def test_preview_progress_is_light_gray_in_the_top_bar(self):
         progress = re.search(
             r"\.content-progress\s*\{(?P<rules>.*?)\}",
             PREVIEW_EDITOR.HTML_TEMPLATE,
             re.DOTALL,
         )
-        self.assertIsNotNone(timestamp)
+        fill = re.search(
+            r"\.content-progress-fill\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        label = re.search(
+            r"\.content-progress-label\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
         self.assertIsNotNone(progress)
-        self.assertIn("color: #b4b4b4", timestamp.group("rules"))
-        self.assertIn("bottom: 0", progress.group("rules"))
-        self.assertIn("background: transparent", progress.group("rules"))
-        self.assertIn(".letterbox-bottom", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIsNotNone(fill)
+        self.assertIsNotNone(label)
+        self.assertIn("inset: 0", progress.group("rules"))
+        self.assertIn("background: #c8c8c8", fill.group("rules"))
+        self.assertIn("color: #b4b4b4", label.group("rules"))
+        self.assertIn("text-overflow: ellipsis", label.group("rules"))
+        self.assertIn("white-space: nowrap", label.group("rules"))
+        self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
 
 
 class ManualGlossaryHookTests(unittest.TestCase):
