@@ -111,23 +111,24 @@ bash "$SKILL_DIR/setup.sh"
 
 FunAudio ASR、Qwen 字幕断句、章节生成、英文翻译和 hotwords 共用同一个百炼 API Key，全部通过 DashScope Python SDK 调用，不需要安装百炼 CLI、Node.js，也不依赖 ZenMux。
 
-为兼容上游，默认保存位置仍为：
+默认保存位置为：
 
 ```text
-~/.config/oil-subtitle/dashscope_api_key
+~/.config/chaochun-subtitle/dashscope_api_key
 ```
 
-文件权限固定为 `600`。后续运行会自动读取，无需重复输入。读取优先级为：
+文件权限固定为 `600`。也可用 `CHAOCHUN_SUBTITLE_API_KEY_FILE` 覆盖该路径。后续运行会自动读取，无需重复输入。读取优先级为：
 
 1. 当前环境中的 `DASHSCOPE_API_KEY`；
-2. 本地 API Key 文件；
-3. 旧的 `~/.bailian/config.json`。
+2. `CHAOCHUN_SUBTITLE_API_KEY_FILE` 或 `~/.config/chaochun-subtitle/dashscope_api_key`；
+3. 遗留 `OIL_SUBTITLE_API_KEY_FILE` / `SCREEN_STUDIO_EDITOR_API_KEY_FILE` 或 `~/.config/oil-subtitle/dashscope_api_key`；
+4. 旧的 `~/.bailian/config.json`。
 
-如果以前执行过 `bl auth login`，`setup.sh` 会尝试把旧凭据迁移到新位置。
+若新路径没有 key、但上游 `~/.config/oil-subtitle/dashscope_api_key` 存在，`configure_api_key.py` 会复制到新路径。如果以前执行过 `bl auth login`，`setup.sh` 会尝试把旧凭据迁移到新位置。
 
 ## 维护 hotwords 与 glossary
 
-词库全部使用普通 JSON 文件，放在用户自己的配置目录，不必修改 Skill 代码，也不要把个人词库或 API Key 提交进仓库。个人 glossary 默认保存在 `~/.config/oil-subtitle/glossary.json`；只有希望换位置时才需要在配置中填写 `glossary`。
+词库全部使用普通 JSON 文件，放在用户自己的配置目录，不必修改 Skill 代码，也不要把个人词库或 API Key 提交进仓库。个人 glossary 默认保存在 `~/.config/chaochun-subtitle/glossary.json`；只有希望换位置时才需要在配置中填写 `glossary`，或设置 `CHAOCHUN_SUBTITLE_GLOSSARY`。上游 `~/.config/oil-subtitle/glossary.json` 仍可作为回退。
 
 `hotwords.json` 在 ASR 识别阶段提高产品名、英文缩写和人名的命中率：
 
@@ -147,12 +148,12 @@ FunAudio ASR、Qwen 字幕断句、章节生成、英文翻译和 hotwords 共�
 ]
 ```
 
-在 `~/.config/oil-subtitle/config.json` 中指向这两个文件：
+在 `~/.config/chaochun-subtitle/config.json` 中指向这两个文件（也可用 `CHAOCHUN_SUBTITLE_CONFIG` 指定路径）：
 
 ```json
 {
-  "hotwords": "~/.config/oil-subtitle/hotwords.json",
-  "glossary": "~/.config/oil-subtitle/glossary.json",
+  "hotwords": "~/.config/chaochun-subtitle/hotwords.json",
+  "glossary": "~/.config/chaochun-subtitle/glossary.json",
   "subtitles": {
     "progress_enabled": true,
     "progress_min_duration_seconds": 180
@@ -234,7 +235,8 @@ ffmpeg -ss 1.35 -i /tmp/colorbar_subtitled.mp4 -frames:v 1 letterbox-frame.png
 - 默认烧录中英同屏；用户只要英文字幕文件时走上游英文 SRT 分支，不烧录。
 - 章节进度默认开启，但只在视频严格超过 3 分钟时显示；可直接让 Agent 为当前任务关闭。
 - 预览服务只在本机启动；端口默认是 `8765`。
-- 配置目录沿用 `~/.config/oil-subtitle/`，以便与上游 skill 共用 API Key 和词库。
+- 配置目录默认为 `~/.config/chaochun-subtitle/`（`CHAOCHUN_SUBTITLE_*` 环境变量优先）。未迁移时仍会读取上游 `OIL_SUBTITLE_*` / `SCREEN_STUDIO_EDITOR_*` 以及 `~/.config/oil-subtitle/`。
+- 不想显示章节进度条时，除了口头告诉 Agent，也可以设置 `CHAOCHUN_SUBTITLE_PROGRESS_ENABLED=0`。
 
 ## 数据边界
 

@@ -23,6 +23,7 @@ from typing import Any
 
 from dashscope_client import call_qwen_text, transcribe_audio_file
 from user_config import (
+    default_vocabulary_cache_path,
     load_dashscope_api_key,
     load_user_config,
     optional_user_path,
@@ -37,6 +38,7 @@ USER_CONFIG = load_user_config()
 HOTWORDS_PATH = optional_user_path(
     USER_CONFIG,
     "hotwords",
+    "CHAOCHUN_SUBTITLE_HOTWORDS",
     "OIL_SUBTITLE_HOTWORDS",
     "SCREEN_STUDIO_EDITOR_HOTWORDS",
 )
@@ -44,11 +46,10 @@ GLOSSARY_PATH = resolve_glossary_path()
 VOCABULARY_CACHE_PATH = optional_user_path(
     USER_CONFIG,
     "vocabulary_cache",
+    "CHAOCHUN_SUBTITLE_VOCABULARY_CACHE",
     "OIL_SUBTITLE_VOCABULARY_CACHE",
     "SCREEN_STUDIO_EDITOR_VOCABULARY_CACHE",
-) or Path(
-    os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-).expanduser() / "oil-subtitle" / "vocabulary-cache.json"
+) or default_vocabulary_cache_path()
 VOCABULARY_TARGET_MODEL = "fun-asr"
 VOCABULARY_PREFIX = "ssedit"
 MAX_SUBTITLE_CHARS = 24

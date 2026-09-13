@@ -1,5 +1,5 @@
 #!/bin/bash
-# oil-subtitle — one-time setup
+# chaochun-subtitle — one-time setup
 
 set -e
 
@@ -7,7 +7,7 @@ SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SKILL_DIR"
 
 if [[ "$(uname)" != "Darwin" ]]; then
-    echo "ERROR: oil-subtitle requires macOS."
+    echo "ERROR: chaochun-subtitle requires macOS."
     exit 1
 fi
 
@@ -37,4 +37,4 @@ fi
 "$SKILL_DIR/.venv/bin/python3" -c "import dashscope, flask, jieba"
 "$SKILL_DIR/.venv/bin/python3" \
     "$SKILL_DIR/scripts/configure_api_key.py" --migrate-existing
-echo "oil-subtitle setup complete."
+echo "chaochun-subtitle setup complete."

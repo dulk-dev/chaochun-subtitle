@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure the one DashScope API key used by oil-subtitle."""
+"""Configure the one DashScope API key used by chaochun-subtitle."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from user_config import (
     PREFERRED_API_KEY_FILE,
     dashscope_api_key_file,
     legacy_bailian_api_key,
+    migrate_legacy_dashscope_api_key_file,
     save_dashscope_api_key,
 )
 
@@ -29,6 +30,14 @@ def main() -> int:
     if target.exists() and target.read_text(encoding="utf-8").strip():
         target.chmod(0o600)
         print(f"DashScope API key is already configured: {target}")
+        return 0
+
+    migrated = migrate_legacy_dashscope_api_key_file()
+    if migrated:
+        print(
+            "Copied the existing oil-subtitle API key to "
+            f"{migrated} (mode 600)."
+        )
         return 0
 
     if args.migrate_existing:

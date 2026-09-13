@@ -168,7 +168,8 @@ class ApiKeyConfigTests(unittest.TestCase):
                 os.environ,
                 {
                     "DASHSCOPE_API_KEY": "",
-                    "OIL_SUBTITLE_API_KEY_FILE": str(target),
+                    "CHAOCHUN_SUBTITLE_API_KEY_FILE": str(target),
+                    "OIL_SUBTITLE_API_KEY_FILE": "",
                 },
                 clear=False,
             ), patch.object(USER_CONFIG, "legacy_bailian_api_key", return_value=""):
