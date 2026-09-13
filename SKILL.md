@@ -35,8 +35,8 @@ description: >
 ```bash
 SKILL_DIR="<chaochun-subtitle 的绝对目录>"
 PYTHON="$SKILL_DIR/.venv/bin/python3"
-CONFIG="${OIL_SUBTITLE_CONFIG:-$HOME/.config/oil-subtitle/config.json}"
-API_KEY_FILE="${OIL_SUBTITLE_API_KEY_FILE:-$HOME/.config/oil-subtitle/dashscope_api_key}"
+CONFIG="${CHAOCHUN_SUBTITLE_CONFIG:-$HOME/.config/chaochun-subtitle/config.json}"
+API_KEY_FILE="${CHAOCHUN_SUBTITLE_API_KEY_FILE:-$HOME/.config/chaochun-subtitle/dashscope_api_key}"
 ```
 
 首次使用时运行：
@@ -46,7 +46,7 @@ bash "$SKILL_DIR/setup.sh"
 "$PYTHON" "$SKILL_DIR/scripts/configure_api_key.py"
 ```
 
-API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需配置一次；文件权限固定为 `600`，不得提交到仓库。已有 `~/.bailian/config.json` 会在初始化时自动迁移。
+API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需配置一次；`configure_api_key.py` 保存到 `~/.config/chaochun-subtitle/dashscope_api_key`，文件权限固定为 `600`，不得提交到仓库。若新路径缺失但 `~/.config/oil-subtitle/dashscope_api_key` 存在，会复制到新路径。已有 `~/.bailian/config.json` 会在初始化时自动迁移。
 
 可选配置：
 
@@ -63,9 +63,9 @@ API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需�
 }
 ```
 
-新配置优先使用 `OIL_SUBTITLE_CONFIG`。为兼容迁移，脚本在新配置不存在时仍会读取 `SCREEN_STUDIO_EDITOR_CONFIG` 及旧环境变量。不要把用户配置、API Key、个人术语表或绝对路径提交进 Skill。
+新配置优先使用 `CHAOCHUN_SUBTITLE_CONFIG`（以及同前缀的 `CHAOCHUN_SUBTITLE_API_KEY_FILE`、`CHAOCHUN_SUBTITLE_PROGRESS_ENABLED` 等）。查找顺序为：新环境变量 → `~/.config/chaochun-subtitle/` → 遗留 `OIL_SUBTITLE_*` / `SCREEN_STUDIO_EDITOR_*` → `~/.config/oil-subtitle/`。不要把用户配置、API Key、个人术语表或绝对路径提交进 Skill。
 
-个人 glossary 默认位于 `~/.config/oil-subtitle/glossary.json`。只有需要换位置时才配置 `glossary`；转录、预览学习和烧录始终解析同一个路径。
+个人 glossary 默认位于 `~/.config/chaochun-subtitle/glossary.json`。只有需要换位置时才配置 `glossary`；转录、预览学习和烧录始终解析同一个路径。上游 `~/.config/oil-subtitle/glossary.json` 仍可作为回退。
 
 ## 工作流
 

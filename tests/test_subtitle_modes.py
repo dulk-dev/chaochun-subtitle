@@ -47,7 +47,7 @@ class SubtitlePreparationTests(unittest.TestCase):
             ]
             with patch.dict(
                 os.environ,
-                {"OIL_SUBTITLE_CONFIG": str(root / "missing.json")},
+                {"CHAOCHUN_SUBTITLE_CONFIG": str(root / "missing.json")},
                 clear=False,
             ), patch.object(sys, "argv", argv), patch.object(
                 PREPARE, "model_json", side_effect=AssertionError("unexpected call")
@@ -88,7 +88,7 @@ class SubtitlePreparationTests(unittest.TestCase):
             ]
             with patch.dict(
                 os.environ,
-                {"OIL_SUBTITLE_CONFIG": str(root / "missing.json")},
+                {"CHAOCHUN_SUBTITLE_CONFIG": str(root / "missing.json")},
                 clear=False,
             ), patch.object(sys, "argv", argv), patch.object(
                 PREPARE, "model_json", side_effect=AssertionError("unexpected call")
@@ -103,7 +103,7 @@ class SubtitlePreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.json"
             with patch.dict(
-                os.environ, {"OIL_SUBTITLE_CONFIG": str(missing)}, clear=False
+                os.environ, {"CHAOCHUN_SUBTITLE_CONFIG": str(missing)}, clear=False
             ):
                 self.assertEqual(PREPARE.resolve_progress_min_duration(None), 180.0)
 
@@ -111,7 +111,7 @@ class SubtitlePreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.json"
             with patch.dict(
-                os.environ, {"OIL_SUBTITLE_CONFIG": str(missing)}, clear=False
+                os.environ, {"CHAOCHUN_SUBTITLE_CONFIG": str(missing)}, clear=False
             ):
                 self.assertTrue(PREPARE.resolve_progress_enabled(None))
                 self.assertFalse(PREPARE.resolve_progress_enabled(False))
@@ -126,8 +126,10 @@ class SubtitlePreparationTests(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "OIL_SUBTITLE_CONFIG": str(config),
+                    "CHAOCHUN_SUBTITLE_CONFIG": str(config),
+                    "CHAOCHUN_SUBTITLE_PROGRESS_ENABLED": "",
                     "OIL_SUBTITLE_PROGRESS_ENABLED": "",
+                    "SCREEN_STUDIO_EDITOR_PROGRESS_ENABLED": "",
                 },
                 clear=False,
             ):
@@ -144,7 +146,7 @@ class SubtitlePreparationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.dict(
-                os.environ, {"OIL_SUBTITLE_CONFIG": str(config)}, clear=False
+                os.environ, {"CHAOCHUN_SUBTITLE_CONFIG": str(config)}, clear=False
             ):
                 self.assertEqual(PREPARE.resolve_progress_min_duration(None), 240.0)
                 self.assertEqual(PREPARE.resolve_progress_min_duration(180), 180.0)

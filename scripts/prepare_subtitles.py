@@ -32,13 +32,14 @@ def resolve_progress_min_duration(requested: float | None) -> float:
         value = requested
     else:
         configured_env = env_value(
+            "CHAOCHUN_SUBTITLE_PROGRESS_MIN_DURATION",
             "OIL_SUBTITLE_PROGRESS_MIN_DURATION",
             "SCREEN_STUDIO_EDITOR_PROGRESS_MIN_DURATION",
         )
         config = load_user_config()
         subtitle_config = config.get("subtitles") or {}
         if not isinstance(subtitle_config, dict):
-            fail("subtitles must be a JSON object in the oil-subtitle config")
+            fail("subtitles must be a JSON object in the chaochun-subtitle config")
         value = configured_env or subtitle_config.get(
             "progress_min_duration_seconds", DEFAULT_PROGRESS_MIN_DURATION
         )

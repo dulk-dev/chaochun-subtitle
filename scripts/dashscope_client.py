@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from http import HTTPStatus
 from pathlib import Path
@@ -16,14 +15,14 @@ from dashscope import Generation, MultiModalConversation
 from dashscope.audio.asr import Transcription
 from dashscope.utils.oss_utils import OssUtils
 
-from user_config import load_dashscope_api_key, load_user_config
+from user_config import load_dashscope_api_key, load_user_config, namespaced_env
 
 
 def _configure() -> str:
     api_key = load_dashscope_api_key()
     config = load_user_config()
     base_url = (
-        os.environ.get("OIL_SUBTITLE_DASHSCOPE_BASE_URL")
+        namespaced_env("DASHSCOPE_BASE_URL")
         or str(config.get("dashscope_base_http_api_url") or "").strip()
     )
     if base_url:
