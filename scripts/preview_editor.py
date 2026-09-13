@@ -142,15 +142,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .current-subtitle {
     position: absolute;
     z-index: 7;
-    inset: 8% 6% 10%;
+    inset: 8% 6% auto;
     display: none;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     flex-direction: column;
     text-align: center;
     font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    font-size: clamp(14px, 2.2vw, 24px);
-    line-height: 1.25;
+    font-size: clamp(20px, 3.4vw, 36px);
+    line-height: 1.05;
     color: #ffffff;
     background: transparent;
     pointer-events: none;
@@ -159,14 +159,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     text-overflow: ellipsis;
   }
   .current-subtitle.visible { display: flex; }
-  .current-subtitle-zh { font-size: 1em; font-weight: 600; line-height: 1.28; color: #ffffff; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .current-subtitle-zh { font-size: 1em; font-weight: 600; line-height: 1.05; color: #ffffff; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .current-subtitle-en {
-    margin-top: 4px;
+    margin-top: 0.04em;
     color: #ffffff;
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-size: .72em;
+    font-size: .48em;
     font-weight: 500;
-    line-height: 1.28;
+    line-height: 1.08;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;

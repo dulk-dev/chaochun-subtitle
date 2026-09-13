@@ -37,6 +37,19 @@ _PROGRESS_LABEL_COLOUR = "&H00B4B4B4&"
 _PROGRESS_FILL_COLOUR = "&H00C8C8C8&"
 _PROGRESS_FILL_ALPHA = "&H8C&"
 _CAPTION_PRIMARY_COLOUR = "&H00FFFFFF&"
+# F3 bottom captions: larger Chinese, smaller English, packed toward the video.
+_CAPTION_ZH_FONT_MIN = 40
+_CAPTION_ZH_HEIGHT_RATIO_LANDSCAPE = 0.062
+_CAPTION_ZH_HEIGHT_RATIO_PORTRAIT = 0.050
+_CAPTION_EN_FONT_MIN = 20
+_CAPTION_EN_FONT_RATIO = 0.48
+_CAPTION_ZH_LINE_RATIO = 1.05
+_CAPTION_EN_LINE_RATIO = 1.08
+_CAPTION_STACK_GAP_RATIO = 0.04
+_CAPTION_STACK_TOP_INSET_RATIO = 0.08
+_CAPTION_BOTTOM_BREATHING_RATIO = 0.20
+_CAPTION_BOTTOM_PAD_MIN = 72
+_CAPTION_BOTTOM_PAD_MIN_BILINGUAL = 96
 _DEFAULT_BEAUTY_STRENGTH_PERCENT = 10.0
 _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
 _BRIGHTEN_LAYER_BRIGHTNESS = 0.08
@@ -581,8 +594,22 @@ def letterbox_layout(
     content_width = _even_dimension(content_width)
     content_height = _even_dimension(content_height)
     is_portrait = content_height > content_width
-    zh_font = max(40, int(content_height * (0.034 if is_portrait else 0.042)))
-    en_font = max(24, int(round(zh_font * 0.70))) if bilingual else 0
+    zh_font = max(
+        _CAPTION_ZH_FONT_MIN,
+        int(
+            content_height
+            * (
+                _CAPTION_ZH_HEIGHT_RATIO_PORTRAIT
+                if is_portrait
+                else _CAPTION_ZH_HEIGHT_RATIO_LANDSCAPE
+            )
+        ),
+    )
+    en_font = (
+        max(_CAPTION_EN_FONT_MIN, int(round(zh_font * _CAPTION_EN_FONT_RATIO)))
+        if bilingual
+        else 0
+    )
     progress_font = (
         max(
             _PROGRESS_FONT_MIN,
@@ -608,11 +635,19 @@ def letterbox_layout(
     else:
         top_pad = _even_dimension(max(48, int(content_height * 0.044)))
 
-    zh_line = int(zh_font * 1.20)
-    en_line = int(en_font * 1.22) if bilingual else 0
-    stack_gap = int(zh_font * 0.10) if bilingual else 0
+    zh_line = int(zh_font * _CAPTION_ZH_LINE_RATIO)
+    en_line = int(en_font * _CAPTION_EN_LINE_RATIO) if bilingual else 0
+    stack_gap = int(zh_font * _CAPTION_STACK_GAP_RATIO) if bilingual else 0
+    stack_top_inset = max(0, int(zh_font * _CAPTION_STACK_TOP_INSET_RATIO))
     bottom_pad = _even_dimension(
-        max(96 if bilingual else 72, zh_line + en_line + stack_gap + int(zh_font * 0.50))
+        max(
+            _CAPTION_BOTTOM_PAD_MIN_BILINGUAL if bilingual else _CAPTION_BOTTOM_PAD_MIN,
+            zh_line
+            + en_line
+            + stack_gap
+            + stack_top_inset
+            + int(zh_font * _CAPTION_BOTTOM_BREATHING_RATIO),
+        )
     )
     canvas_height = content_height + top_pad + bottom_pad
     if canvas_height % 2:
@@ -623,8 +658,7 @@ def letterbox_layout(
     progress_fill_y = 0
     progress_label_y = top_pad // 2
 
-    stack_height = zh_line + stack_gap + en_line
-    stack_top = content_height + top_pad + max(0, int((bottom_pad - stack_height) / 2))
+    stack_top = content_height + top_pad + stack_top_inset
     zh_y = stack_top + zh_line // 2
     en_y = stack_top + zh_line + stack_gap + max(en_line, 1) // 2 if bilingual else 0
 
@@ -953,7 +987,7 @@ def generate_ass(lines: list[dict], output_path: Path, video_width: int = 1920,
         [V4+ Styles]
         Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
         Style: CaptionZh,{font_name},{layout['zh_font']},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
-        Style: CaptionEn,{font_name},{layout['en_font'] or max(24, int(layout['zh_font'] * 0.7))},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
+        Style: CaptionEn,{font_name},{layout['en_font'] or max(_CAPTION_EN_FONT_MIN, int(round(layout['zh_font'] * _CAPTION_EN_FONT_RATIO)))},{_CAPTION_PRIMARY_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,20,20,0,1
         Style: CaptionBox,Arial,10,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
         Style: ProgressLabel,{font_name},{progress_font},{_PROGRESS_LABEL_COLOUR},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 

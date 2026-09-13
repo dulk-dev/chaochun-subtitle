@@ -66,6 +66,33 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertNotIn("flex-basis: 16%", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
 
+    def test_preview_captions_match_f3_packing(self):
+        caption = re.search(
+            r"\.current-subtitle\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        zh = re.search(
+            r"\.current-subtitle-zh\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        en = re.search(
+            r"\.current-subtitle-en\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(caption)
+        self.assertIsNotNone(zh)
+        self.assertIsNotNone(en)
+        self.assertIn("justify-content: flex-start", caption.group("rules"))
+        self.assertNotIn("justify-content: center", caption.group("rules"))
+        self.assertIn("line-height: 1.05", caption.group("rules"))
+        self.assertIn("line-height: 1.05", zh.group("rules"))
+        self.assertIn("font-size: .48em", en.group("rules"))
+        self.assertIn("line-height: 1.08", en.group("rules"))
+        self.assertNotIn("font-size: .72em", PREVIEW_EDITOR.HTML_TEMPLATE)
+
 
 class ManualGlossaryHookTests(unittest.TestCase):
     def test_saving_source_subtitles_records_pending_agent_review(self):
