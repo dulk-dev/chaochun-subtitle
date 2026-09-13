@@ -332,9 +332,56 @@ class LetterboxLayoutTests(unittest.TestCase):
         self.assertLess(layout["zh_y"], layout["canvas_height"])
         self.assertGreater(layout["en_y"], layout["zh_y"])
         self.assertLess(layout["en_y"], layout["canvas_height"])
+        bar_top = 1080 + layout["top_pad"]
+        stack_gap = int(layout["zh_font"] * 0.04)
+        stack_height = layout["zh_line_height"] + stack_gap + layout["en_line_height"]
+        centered_zh_y = (
+            bar_top
+            + max(0, int((layout["bottom_pad"] - stack_height) / 2))
+            + layout["zh_line_height"] // 2
+        )
+        self.assertNotEqual(layout["zh_y"], centered_zh_y)
+        self.assertLess(layout["zh_y"] - bar_top, layout["bottom_pad"] // 3)
         self.assertEqual(
             BURN_SUBTITLES.letterbox_pad_filter(layout),
             f"pad={layout['canvas_width']}:{layout['canvas_height']}:0:{layout['top_pad']}:black",
+        )
+
+    def test_chapter_strip_is_compact_with_larger_labels(self):
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        captions = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=False)
+        self.assertGreaterEqual(layout["progress_font"], 40)
+        self.assertGreater(layout["progress_font"], BURN_SUBTITLES._UPSTREAM_PROGRESS_FONT_1080P)
+        self.assertLessEqual(layout["top_pad"], 64)
+        self.assertLess(layout["top_pad"], 80)
+        self.assertGreaterEqual(layout["top_pad"], layout["progress_font"] + 8)
+        self.assertEqual(layout["bottom_pad"], captions["bottom_pad"])
+        self.assertEqual(layout["zh_font"], captions["zh_font"])
+        self.assertEqual(layout["en_font"], captions["en_font"])
+        self.assertEqual(layout["progress_fill_height"], layout["top_pad"])
+
+    def test_f3_landscape_captions_are_larger_and_top_aligned(self):
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        self.assertEqual(layout["zh_font"], 66)
+        self.assertEqual(layout["en_font"], 32)
+        self.assertEqual(layout["zh_line_height"], 69)
+        self.assertEqual(layout["en_line_height"], 34)
+        self.assertEqual(layout["bottom_pad"], 122)
+        bar_top = 1080 + layout["top_pad"]
+        stack_top = bar_top + max(0, int(layout["zh_font"] * 0.08))
+        self.assertEqual(layout["zh_y"], stack_top + layout["zh_line_height"] // 2)
+        self.assertEqual(
+            layout["en_y"],
+            stack_top + layout["zh_line_height"] + int(layout["zh_font"] * 0.04)
+            + layout["en_line_height"] // 2,
+        )
+        self.assertAlmostEqual(layout["en_font"] / layout["zh_font"], 0.48, places=2)
+        portrait = BURN_SUBTITLES.letterbox_layout(1080, 1920, bilingual=True)
+        self.assertEqual(portrait["zh_font"], 96)
+        self.assertGreater(portrait["zh_font"], 40)
+        self.assertNotEqual(
+            portrait["zh_font"],
+            max(40, int(1920 * 0.042)),
         )
 
     def test_burned_ass_has_no_running_clock(self):

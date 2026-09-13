@@ -58,7 +58,40 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("color: #b4b4b4", label.group("rules"))
         self.assertIn("text-overflow: ellipsis", label.group("rules"))
         self.assertIn("white-space: nowrap", label.group("rules"))
+        self.assertIn("clamp(16px, 3.0vw, 36px)", label.group("rules"))
+        self.assertIn(
+            ".video-pane.has-progress .letterbox-top { flex-basis: 11%; }",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+        )
+        self.assertNotIn("flex-basis: 16%", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
+
+    def test_preview_captions_match_f3_packing(self):
+        caption = re.search(
+            r"\.current-subtitle\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        zh = re.search(
+            r"\.current-subtitle-zh\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        en = re.search(
+            r"\.current-subtitle-en\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(caption)
+        self.assertIsNotNone(zh)
+        self.assertIsNotNone(en)
+        self.assertIn("justify-content: flex-start", caption.group("rules"))
+        self.assertNotIn("justify-content: center", caption.group("rules"))
+        self.assertIn("line-height: 1.05", caption.group("rules"))
+        self.assertIn("line-height: 1.05", zh.group("rules"))
+        self.assertIn("font-size: .48em", en.group("rules"))
+        self.assertIn("line-height: 1.08", en.group("rules"))
+        self.assertNotIn("font-size: .72em", PREVIEW_EDITOR.HTML_TEMPLATE)
 
 
 class ManualGlossaryHookTests(unittest.TestCase):
