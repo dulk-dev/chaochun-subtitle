@@ -58,6 +58,12 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("color: #b4b4b4", label.group("rules"))
         self.assertIn("text-overflow: ellipsis", label.group("rules"))
         self.assertIn("white-space: nowrap", label.group("rules"))
+        self.assertIn("clamp(16px, 3.0vw, 36px)", label.group("rules"))
+        self.assertIn(
+            ".video-pane.has-progress .letterbox-top { flex-basis: 11%; }",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+        )
+        self.assertNotIn("flex-basis: 16%", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
 
 

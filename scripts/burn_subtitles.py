@@ -27,6 +27,12 @@ from user_config import resolve_progress_enabled
 _DISPLAY_REPLACEMENTS: list[tuple[re.Pattern, str]] = []
 _SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.92
 _UPSTREAM_PROGRESS_FONT_1080P = 22
+# Compact chapter strip: larger labels, tighter top pad than font*2.10 + 80px floor.
+_PROGRESS_FONT_MIN = 36
+_PROGRESS_FONT_HEIGHT_RATIO_LANDSCAPE = 0.040
+_PROGRESS_FONT_HEIGHT_RATIO_PORTRAIT = 0.034
+_PROGRESS_TOP_PAD_MIN = 52
+_PROGRESS_TOP_PAD_FONT_RATIO = 1.36
 _PROGRESS_LABEL_COLOUR = "&H00B4B4B4&"
 _PROGRESS_FILL_COLOUR = "&H00C8C8C8&"
 _PROGRESS_FILL_ALPHA = "&H8C&"
@@ -569,8 +575,8 @@ def letterbox_layout(
     """Compute even letterbox pads and text anchors for the burned frame.
 
     Original picture stays unscaled in the middle. Chapter progress (when
-    enabled) occupies the top black bar; bilingual captions sit in the bottom
-    black bar.
+    enabled) occupies a compact top black bar with larger directory labels;
+    bilingual captions sit in the bottom black bar.
     """
     content_width = _even_dimension(content_width)
     content_height = _even_dimension(content_height)
@@ -578,12 +584,27 @@ def letterbox_layout(
     zh_font = max(40, int(content_height * (0.034 if is_portrait else 0.042)))
     en_font = max(24, int(round(zh_font * 0.70))) if bilingual else 0
     progress_font = (
-        max(28, int(content_height * (0.026 if is_portrait else 0.030)))
+        max(
+            _PROGRESS_FONT_MIN,
+            int(
+                content_height
+                * (
+                    _PROGRESS_FONT_HEIGHT_RATIO_PORTRAIT
+                    if is_portrait
+                    else _PROGRESS_FONT_HEIGHT_RATIO_LANDSCAPE
+                )
+            ),
+        )
         if progress
         else 12
     )
     if progress:
-        top_pad = _even_dimension(max(80, int(progress_font * 2.10)))
+        top_pad = _even_dimension(
+            max(
+                _PROGRESS_TOP_PAD_MIN,
+                int(progress_font * _PROGRESS_TOP_PAD_FONT_RATIO),
+            )
+        )
     else:
         top_pad = _even_dimension(max(48, int(content_height * 0.044)))
 

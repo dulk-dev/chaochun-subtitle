@@ -337,6 +337,19 @@ class LetterboxLayoutTests(unittest.TestCase):
             f"pad={layout['canvas_width']}:{layout['canvas_height']}:0:{layout['top_pad']}:black",
         )
 
+    def test_chapter_strip_is_compact_with_larger_labels(self):
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        captions = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=False)
+        self.assertGreaterEqual(layout["progress_font"], 40)
+        self.assertGreater(layout["progress_font"], BURN_SUBTITLES._UPSTREAM_PROGRESS_FONT_1080P)
+        self.assertLessEqual(layout["top_pad"], 64)
+        self.assertLess(layout["top_pad"], 80)
+        self.assertGreaterEqual(layout["top_pad"], layout["progress_font"] + 8)
+        self.assertEqual(layout["bottom_pad"], captions["bottom_pad"])
+        self.assertEqual(layout["zh_font"], captions["zh_font"])
+        self.assertEqual(layout["en_font"], captions["en_font"])
+        self.assertEqual(layout["progress_fill_height"], layout["top_pad"])
+
     def test_burned_ass_has_no_running_clock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "no_clock.ass"

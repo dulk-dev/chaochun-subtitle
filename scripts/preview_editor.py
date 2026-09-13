@@ -189,7 +189,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     pointer-events: none;
   }
   .content-progress.visible { display: block; }
-  .video-pane.has-progress .letterbox-top { flex-basis: 16%; }
+  .video-pane.has-progress .letterbox-top { flex-basis: 11%; }
   .content-progress-fill {
     position: absolute;
     z-index: 1;
@@ -223,7 +223,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     overflow: hidden;
     padding: 0 8px;
     color: #b4b4b4;
-    font-size: clamp(14px, 2.2vw, 28px);
+    font-size: clamp(16px, 3.0vw, 36px);
     font-weight: 600;
     line-height: 1;
     letter-spacing: .02em;
