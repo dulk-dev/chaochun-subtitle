@@ -675,12 +675,44 @@ def letterbox_layout(
         "progress_fill_height": progress_fill_height,
         "progress_fill_y": progress_fill_y,
         "progress_label_y": progress_label_y,
+        "stack_top_inset": stack_top_inset,
+        "stack_gap": stack_gap,
         "zh_y": zh_y,
         "en_y": en_y,
         "zh_line_height": zh_line,
         "en_line_height": en_line,
         "bilingual": bilingual,
         "progress": progress,
+    }
+
+
+def preview_layout_payload(layout: dict) -> dict:
+    """JSON for the web preview; keep fonts/bars in lockstep with burn geometry."""
+    canvas_h = max(int(layout["canvas_height"]), 1)
+    bottom = max(int(layout["bottom_pad"]), 1)
+    return {
+        "content_width": layout["content_width"],
+        "content_height": layout["content_height"],
+        "canvas_width": layout["canvas_width"],
+        "canvas_height": layout["canvas_height"],
+        "top_pad": layout["top_pad"],
+        "bottom_pad": layout["bottom_pad"],
+        "zh_font": layout["zh_font"],
+        "en_font": layout["en_font"],
+        "progress_font": layout["progress_font"],
+        "stack_top_inset": layout.get("stack_top_inset", 0),
+        "stack_gap": layout.get("stack_gap", 0),
+        "zh_line_height": layout["zh_line_height"],
+        "en_line_height": layout["en_line_height"],
+        "bilingual": layout["bilingual"],
+        "progress": layout["progress"],
+        "top_frac": layout["top_pad"] / canvas_h,
+        "bottom_frac": layout["bottom_pad"] / canvas_h,
+        "zh_font_frac": layout["zh_font"] / canvas_h,
+        "en_font_frac": layout["en_font"] / canvas_h,
+        "progress_font_frac": layout["progress_font"] / canvas_h,
+        "stack_top_inset_bar_frac": layout.get("stack_top_inset", 0) / bottom,
+        "stack_gap_bar_frac": layout.get("stack_gap", 0) / bottom,
     }
 
 

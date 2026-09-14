@@ -11,6 +11,7 @@ import sys
 import threading
 from pathlib import Path
 
+from burn_subtitles import letterbox_layout, preview_layout_payload
 from learn_glossary import learn_manual_edits
 
 from flask import (
@@ -119,57 +120,90 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     min-height: 0;
     background: #000;
     display: flex;
-    align-items: stretch;
+    align-items: center;
     justify-content: center;
     overflow: hidden;
     position: relative;
   }
+  /* Stage aspect + bar fractions come from letterbox_layout via --lb-* (not viewport vw). */
   .video-stage {
-    width: 100%;
-    height: 100%;
+    --lb-top-frac: 0.04603;
+    --lb-bottom-frac: 0.09683;
+    --lb-scale: 1;
+    --lb-zh-font: 66;
+    --lb-en-font: 32;
+    --lb-progress-font: 43;
+    --lb-stack-inset-frac: 0.043;
+    --lb-stack-gap-frac: 0.022;
+    position: relative;
     display: flex;
     flex-direction: column;
     background: #000;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 1920 / 1260;
   }
   .letterbox-top, .letterbox-bottom {
     position: relative;
-    flex: 0 0 12%;
+    overflow: hidden;
     background: #000;
     z-index: 8;
   }
-  .letterbox-bottom { flex-basis: 18%; }
-  .video-stage video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
+  .letterbox-top { flex: 0 0 calc(var(--lb-top-frac) * 100%); }
+  .letterbox-bottom { flex: 0 0 calc(var(--lb-bottom-frac) * 100%); }
+  .video-stage video {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    object-fit: fill;
+    background: #000;
+  }
+  video::cue { display: none; }
+  video::-webkit-media-text-track-container { display: none !important; }
+  video::-webkit-media-text-track-display { display: none !important; }
   .current-subtitle {
     position: absolute;
     z-index: 7;
-    inset: 8% 6% auto;
+    inset: 0;
     display: none;
     align-items: center;
     justify-content: flex-start;
     flex-direction: column;
     text-align: center;
-    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    font-size: clamp(20px, 3.4vw, 36px);
+    padding-top: calc(var(--lb-stack-inset-frac) * 100%);
+    gap: calc(var(--lb-stack-gap-frac) * 100%);
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
+    font-size: calc(var(--lb-zh-font) * var(--lb-scale) * 1px);
     line-height: 1.05;
     color: #ffffff;
     background: transparent;
     pointer-events: none;
-    white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   .current-subtitle.visible { display: flex; }
-  .current-subtitle-zh { font-size: 1em; font-weight: 600; line-height: 1.05; color: #ffffff; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  .current-subtitle-en {
-    margin-top: 0.04em;
+  .current-subtitle-zh {
+    font-size: 1em;
+    font-weight: 600;
+    line-height: 1.05;
     color: #ffffff;
-    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-size: .48em;
-    font-weight: 500;
-    line-height: 1.08;
-    max-width: 100%;
+    max-width: 92%;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .current-subtitle-en {
+    margin-top: 0;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    font-size: calc(var(--lb-en-font) * var(--lb-scale) * 1px);
+    font-weight: 500;
+    line-height: 1.08;
+    max-width: 92%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .bilingual-mode .current-subtitle { text-shadow: none; }
   .sub-text-zh { color: #16161f; font-size: 14px; line-height: 1.55; }
@@ -189,7 +223,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     pointer-events: none;
   }
   .content-progress.visible { display: block; }
-  .video-pane.has-progress .letterbox-top { flex-basis: 11%; }
   .content-progress-fill {
     position: absolute;
     z-index: 1;
@@ -223,7 +256,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     overflow: hidden;
     padding: 0 8px;
     color: #b4b4b4;
-    font-size: clamp(16px, 3.0vw, 36px);
+    font-size: calc(var(--lb-progress-font) * var(--lb-scale) * 1px);
     font-weight: 600;
     line-height: 1;
     letter-spacing: .02em;
@@ -509,7 +542,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     body { height: 100dvh; overflow: hidden; }
     .main { flex-direction: column; overflow: hidden; }
     .video-pane { margin-right: 0; flex: 0 0 auto; height: 40dvh; }
-    .video-wrap video { width: 100%; height: 100%; object-fit: contain; }
     .list-pane {
       position: relative;
       top: auto; right: auto; bottom: auto;
@@ -519,7 +551,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       border-top: 1px solid var(--border);
     }
     .sub-times { min-width: 80px; font-size: 10px; }
-    .current-subtitle { font-size: clamp(11px, 3.5vw, 16px); }
   }
 </style>
 <script src="oil://bridge/html-v1.js"></script>
@@ -529,7 +560,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="main">
   <div class="video-pane" id="videoPaneEl">
     <div class="video-wrap">
-      <div class="video-stage">
+      <div class="video-stage" id="videoStage">
         <div class="letterbox-top">
           <div class="content-progress" id="contentProgress">
             <div class="content-progress-fill" id="contentProgressFill"></div>
@@ -588,6 +619,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <script>
 const LS_KEY = __CACHE_KEY__;
+const DEFAULT_LAYOUT = __DEFAULT_LAYOUT__;
 
 // ── state ────────────────────────────────────────────────────────────────────
 let segments = [];
@@ -611,6 +643,7 @@ const listInfo   = document.getElementById('listInfo');
 const statusTxt  = document.getElementById('statusText');
 const listPane   = document.getElementById('listPane');
 const videoPaneEl = document.getElementById('videoPaneEl');
+const videoStage  = document.getElementById('videoStage');
 const dubAudio   = document.getElementById('dubAudio');
 const langTabs   = document.getElementById('langTabs');
 const contentProgress = document.getElementById('contentProgress');
@@ -680,30 +713,88 @@ function segmentSearchText(seg) {
   return segmentFields().map(field => seg[field] || '').join('\n');
 }
 
+function segmentZh(seg) {
+  return (seg.zh || seg.text || '').trim();
+}
+
+function segmentEn(seg) {
+  return (seg.en || seg.text_en || '').trim();
+}
+
 function renderCurrentSubtitle(seg) {
   curSub.replaceChildren();
   if (!seg) {
     curSub.classList.remove('visible');
     return;
   }
-  if (bilingualMode) {
+  const zhText = segmentZh(seg);
+  const enText = segmentEn(seg);
+  if (zhText) {
     const zh = document.createElement('div');
     zh.className = 'current-subtitle-zh';
-    zh.textContent = (seg.zh || '').trim();
+    zh.textContent = zhText;
+    curSub.append(zh);
+  }
+  if (enText) {
     const en = document.createElement('div');
     en.className = 'current-subtitle-en';
-    en.textContent = (seg.en || '').trim();
-    curSub.append(zh, en);
-  } else {
-    curSub.textContent = (seg.text || '').trim();
+    en.textContent = enText;
+    curSub.append(en);
   }
-  curSub.classList.add('visible');
+  curSub.classList.toggle('visible', Boolean(zhText || enText));
+}
+
+function progressEnabled() {
+  const duration = Number(manifest?.duration || vid.duration || 0);
+  const minDuration = Number(manifest?.min_progress_duration ?? 180);
+  return duration > minDuration && chapters.length > 1;
+}
+
+let letterboxLayout = DEFAULT_LAYOUT;
+
+function applyLetterboxLayout(layout) {
+  const wrap = document.querySelector('.video-wrap');
+  if (!wrap || !videoStage || !layout) return;
+  letterboxLayout = layout;
+  const cw = Number(layout.canvas_width) || 1920;
+  const ch = Number(layout.canvas_height) || 1260;
+  const scale = Math.min(wrap.clientWidth / cw, wrap.clientHeight / ch);
+  videoStage.style.width = `${Math.max(1, Math.floor(cw * scale))}px`;
+  videoStage.style.height = `${Math.max(1, Math.floor(ch * scale))}px`;
+  videoStage.style.aspectRatio = `${cw} / ${ch}`;
+  videoStage.style.setProperty('--lb-scale', String(scale));
+  videoStage.style.setProperty('--lb-top-frac', String(layout.top_frac));
+  videoStage.style.setProperty('--lb-bottom-frac', String(layout.bottom_frac));
+  videoStage.style.setProperty('--lb-zh-font', String(layout.zh_font));
+  videoStage.style.setProperty('--lb-en-font', String(layout.en_font || 0));
+  videoStage.style.setProperty('--lb-progress-font', String(layout.progress_font));
+  videoStage.style.setProperty('--lb-stack-inset-frac', String(layout.stack_top_inset_bar_frac || 0));
+  videoStage.style.setProperty('--lb-stack-gap-frac', String(layout.stack_gap_bar_frac || 0));
+}
+
+async function refreshLetterboxLayout() {
+  const width = vid.videoWidth || DEFAULT_LAYOUT.content_width;
+  const height = vid.videoHeight || DEFAULT_LAYOUT.content_height;
+  const bilingual = 1;
+  const progress = progressEnabled() ? 1 : 0;
+  try {
+    const data = await (await fetch(
+      `/api/layout?width=${width}&height=${height}&bilingual=${bilingual}&progress=${progress}`
+    )).json();
+    applyLetterboxLayout(data);
+  } catch (err) {
+    applyLetterboxLayout(letterboxLayout || DEFAULT_LAYOUT);
+  }
+}
+
+function disableNativeTextTracks() {
+  if (!vid.textTracks) return;
+  for (const track of vid.textTracks) track.mode = 'disabled';
 }
 
 function setupContentProgress() {
   const duration = Number(manifest.duration || 0);
-  const minDuration = Number(manifest.min_progress_duration ?? 180);
-  const enabled = duration > minDuration && chapters.length > 1;
+  const enabled = progressEnabled();
   contentProgress.classList.toggle('visible', enabled);
   videoPaneEl.classList.toggle('has-progress', enabled);
   contentProgressMarkers.replaceChildren();
@@ -746,6 +837,12 @@ async function init() {
   const src = langs.find(l => l.source) || langs[0];
   await switchLang(src.code);
   setupContentProgress();
+  await refreshLetterboxLayout();
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => applyLetterboxLayout(letterboxLayout)).observe(
+      document.querySelector('.video-wrap')
+    );
+  }
 }
 
 function buildTabs(langs) {
@@ -769,6 +866,8 @@ async function switchLang(code) {
   segments = (data.segments || []).map(s => Object.assign({}, s, { _id: Math.random().toString(36).slice(2) }));
   deletedIds = new Set();
   editMode = null;
+  bilingualMode = Boolean(manifest.bilingual) || segments.some(s => (s.en || s.text_en || '').trim());
+  document.body.classList.toggle('bilingual-mode', bilingualMode);
   document.querySelectorAll('.lang-tab').forEach(t => t.classList.toggle('active', t.dataset.code === code));
   setAudio(L);
   render();
@@ -833,8 +932,15 @@ vid.addEventListener('timeupdate', () => {
   updateContentProgress(vid.currentTime);
 });
 vid.addEventListener('loadedmetadata', () => {
+  disableNativeTextTracks();
   setupContentProgress();
+  refreshLetterboxLayout();
+  const previewTime = Number(new URLSearchParams(location.search).get('t'));
+  if (Number.isFinite(previewTime) && previewTime >= 0) {
+    vid.currentTime = previewTime;
+  }
 });
+vid.addEventListener('loadeddata', disableNativeTextTracks);
 
 // ── render ──────────────────────────────────────────────────────────────────
 function render() {
@@ -872,7 +978,7 @@ function render() {
       textEl.className = `sub-text sub-text-${field}`;
       textEl.dataset.field = field;
       textEl.contentEditable = 'false';
-      const fieldText = seg[field] || '';
+      const fieldText = seg[field] || (field === 'zh' ? seg.text : '') || '';
       if (currentNeedle) textEl.innerHTML = insertMarks(fieldText, currentNeedle);
       else textEl.textContent = fieldText;
       textEl.addEventListener('mousedown', e => {
@@ -958,7 +1064,11 @@ function startEdit(id, textEl, field = 'text') {
 
 function finishEdit(id, field, value) {
   const seg = segments.find(s => s._id === id);
-  if (seg) seg[field] = value;
+  if (seg) {
+    seg[field] = value;
+    if (field === 'zh') seg.text = value;
+    if (field === 'text') seg.zh = value;
+  }
   editMode = null;
   saveLS();
 }
@@ -1157,6 +1267,12 @@ def index():
     except OSError:
         cache_key = f"subtitle_editor_v3:{VIDEO_PATH}:{TRANSCRIPT_PATH}"
     html = HTML_TEMPLATE.replace("__CACHE_KEY__", json.dumps(cache_key))
+    html = html.replace(
+        "__DEFAULT_LAYOUT__",
+        json.dumps(preview_layout_payload(
+            letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        )),
+    )
     return Response(html, content_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -1169,6 +1285,27 @@ def manifest():
     # 单语言:合成一个只有一种语言的 manifest,前端逻辑统一
     return jsonify({"video": "/video", "languages": [
         {"code": "src", "name": "字幕", "transcript": "src", "source": True}]})
+
+
+@app.route("/api/layout")
+def api_layout():
+    """Letterbox geometry from the same helper used to burn ASS."""
+    try:
+        width = int(float(request.args.get("width") or 1920))
+        height = int(float(request.args.get("height") or 1080))
+    except (TypeError, ValueError):
+        width, height = 1920, 1080
+    bilingual = str(request.args.get("bilingual", "1")).lower() not in {"0", "false", "no"}
+    progress = str(request.args.get("progress", "0")).lower() in {"1", "true", "yes"}
+    layout = letterbox_layout(
+        max(2, width),
+        max(2, height),
+        bilingual=bilingual,
+        progress=progress,
+    )
+    response = jsonify(preview_layout_payload(layout))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.route("/video")

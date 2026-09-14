@@ -342,6 +342,11 @@ class LetterboxLayoutTests(unittest.TestCase):
         )
         self.assertNotEqual(layout["zh_y"], centered_zh_y)
         self.assertLess(layout["zh_y"] - bar_top, layout["bottom_pad"] // 3)
+        self.assertIn("stack_top_inset", layout)
+        self.assertIn("stack_gap", layout)
+        payload = BURN_SUBTITLES.preview_layout_payload(layout)
+        self.assertAlmostEqual(payload["top_frac"], layout["top_pad"] / layout["canvas_height"])
+        self.assertEqual(payload["zh_font"], layout["zh_font"])
         self.assertEqual(
             BURN_SUBTITLES.letterbox_pad_filter(layout),
             f"pad={layout['canvas_width']}:{layout['canvas_height']}:0:{layout['top_pad']}:black",

@@ -58,13 +58,25 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("color: #b4b4b4", label.group("rules"))
         self.assertIn("text-overflow: ellipsis", label.group("rules"))
         self.assertIn("white-space: nowrap", label.group("rules"))
-        self.assertIn("clamp(16px, 3.0vw, 36px)", label.group("rules"))
-        self.assertIn(
-            ".video-pane.has-progress .letterbox-top { flex-basis: 11%; }",
-            PREVIEW_EDITOR.HTML_TEMPLATE,
-        )
+        self.assertIn("--lb-progress-font", label.group("rules"))
+        self.assertNotIn("clamp(", label.group("rules"))
+        self.assertNotIn("3.0vw", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("--lb-top-frac", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("flex-basis: 11%", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("flex-basis: 16%", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("flex-basis: 12%", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("flex-basis: 18%", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn(".burn-timestamp", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("object-fit: fill", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("video::cue", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("/api/layout", PREVIEW_EDITOR.HTML_TEMPLATE)
+        top_bar = re.search(
+            r"\.letterbox-top,\s*\.letterbox-bottom\s*\{(?P<rules>.*?)\}",
+            PREVIEW_EDITOR.HTML_TEMPLATE,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(top_bar)
+        self.assertIn("overflow: hidden", top_bar.group("rules"))
 
     def test_preview_captions_match_f3_packing(self):
         caption = re.search(
@@ -88,10 +100,45 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("justify-content: flex-start", caption.group("rules"))
         self.assertNotIn("justify-content: center", caption.group("rules"))
         self.assertIn("line-height: 1.05", caption.group("rules"))
+        self.assertIn("inset: 0", caption.group("rules"))
+        self.assertIn("overflow: hidden", caption.group("rules"))
+        self.assertIn("--lb-zh-font", caption.group("rules"))
+        self.assertIn("--lb-stack-inset-frac", caption.group("rules"))
         self.assertIn("line-height: 1.05", zh.group("rules"))
-        self.assertIn("font-size: .48em", en.group("rules"))
+        self.assertIn("--lb-en-font", en.group("rules"))
         self.assertIn("line-height: 1.08", en.group("rules"))
         self.assertNotIn("font-size: .72em", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("font-size: .48em", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("inset: 8% 6% auto", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertNotIn("clamp(20px, 3.4vw, 36px)", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("segmentEn", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("seg.en || seg.text_en", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("seg.zh || seg.text", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("disableNativeTextTracks", PREVIEW_EDITOR.HTML_TEMPLATE)
+
+
+class LetterboxApiTests(unittest.TestCase):
+    def test_layout_endpoint_matches_burn_letterbox_layout(self):
+        response = PREVIEW_EDITOR.app.test_client().get(
+            "/api/layout?width=1280&height=720&bilingual=1&progress=1"
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        layout = PREVIEW_EDITOR.letterbox_layout(
+            1280, 720, bilingual=True, progress=True
+        )
+        expected = PREVIEW_EDITOR.preview_layout_payload(layout)
+        self.assertEqual(payload["top_pad"], expected["top_pad"])
+        self.assertEqual(payload["bottom_pad"], expected["bottom_pad"])
+        self.assertEqual(payload["zh_font"], expected["zh_font"])
+        self.assertEqual(payload["en_font"], expected["en_font"])
+        self.assertEqual(payload["progress_font"], expected["progress_font"])
+        self.assertAlmostEqual(payload["top_frac"], layout["top_pad"] / layout["canvas_height"])
+        self.assertAlmostEqual(
+            payload["en_font"] / payload["zh_font"], 0.48, places=2
+        )
+        self.assertLess(payload["top_frac"], 0.08)
+        self.assertGreater(payload["bottom_frac"], payload["top_frac"])
 
 
 class ManualGlossaryHookTests(unittest.TestCase):
