@@ -46,6 +46,8 @@ bash "$SKILL_DIR/setup.sh"
 "$PYTHON" "$SKILL_DIR/scripts/configure_api_key.py"
 ```
 
+烧录要求 ffmpeg 带 libass（ass 滤镜），脚本会前置自检；不可用时按报错提示用 `CHAOCHUN_SUBTITLE_FFMPEG` 指定带 libass 的 ffmpeg 二进制。
+
 API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需配置一次；`configure_api_key.py` 保存到 `~/.config/chaochun-subtitle/dashscope_api_key`，文件权限固定为 `600`，不得提交到仓库。若新路径缺失但 `~/.config/oil-subtitle/dashscope_api_key` 存在，会复制到新路径。已有 `~/.bailian/config.json` 会在初始化时自动迁移。
 
 可选配置：

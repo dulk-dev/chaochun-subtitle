@@ -61,6 +61,23 @@ def log(msg):
     print(f"[burn-subtitles] {msg}", flush=True)
 
 
+def resolve_ffmpeg() -> str:
+    ffmpeg = os.environ.get("CHAOCHUN_SUBTITLE_FFMPEG", "ffmpeg")
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-filters"],
+                             capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        out = ""
+    if " ass " not in out:
+        sys.exit(
+            f"❌ {ffmpeg} 缺少 libass（无 ass 滤镜）；若 ffmpeg 报 "
+            f"\"No option name near '...ass'\"，是二进制问题而非路径转义。"
+            f"请用 CHAOCHUN_SUBTITLE_FFMPEG 指定带 libass 的 ffmpeg 后重跑，"
+            f"中间产物均可复用。"
+        )
+    return ffmpeg
+
+
 def set_display_replacements(entries: list[dict]):
     """Configure case-insensitive text replacements applied to final captions.
 
@@ -1474,7 +1491,7 @@ def burn_subtitles(video_path: Path, ass_path: Path, output_path: Path,
     progress_path = Path("/tmp/ffmpeg_burn_progress.txt")
     progress_path.unlink(missing_ok=True)
 
-    cmd = ["ffmpeg", "-i", str(video_path)]
+    cmd = [os.environ.get("CHAOCHUN_SUBTITLE_FFMPEG", "ffmpeg"), "-i", str(video_path)]
     if beauty_enabled:
         cmd.extend([
             "-filter_complex", graph,
@@ -1605,6 +1622,9 @@ def main():
     if progress_requested and chapters_path and not chapters_path.exists():
         print(f"❌ Chapters not found: {chapters_path}")
         sys.exit(1)
+
+    if not (args.draft_only or args.ass_only):
+        resolve_ffmpeg()
 
     # Output paths
     if args.output:
