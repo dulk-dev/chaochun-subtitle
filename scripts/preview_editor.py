@@ -264,6 +264,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .content-progress-label .progress-label-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .content-progress-label.is-scrolling {
+    justify-content: flex-start;
+    text-overflow: clip;
+  }
+  .content-progress-label.is-scrolling .progress-label-text {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    animation: chapter-title-marquee var(--marquee-duration, 8s) linear infinite alternate;
+  }
+  @keyframes chapter-title-marquee {
+    0%, 12% { transform: translateX(0); }
+    88%, 100% { transform: translateX(var(--marquee-shift, 0px)); }
+  }
 
   /* ---- list pane: always-visible right panel ---- */
   .list-pane {
@@ -813,10 +833,39 @@ function setupContentProgress() {
     label.className = 'content-progress-label';
     label.style.left = `${startPercent}%`;
     label.style.width = `${endPercent - startPercent}%`;
-    label.textContent = chapter.title || `第 ${index + 1} 节`;
+    label.dataset.start = String(chapter.start ?? 0);
+    label.dataset.end = String(chapter.end ?? duration);
+    const text = document.createElement('span');
+    text.className = 'progress-label-text';
+    text.textContent = chapter.title || `第 ${index + 1} 节`;
+    label.appendChild(text);
     contentProgressLabels.appendChild(label);
   });
   updateContentProgress(vid.currentTime || 0);
+}
+
+function syncChapterLabelMarquee(label, active) {
+  const text = label.querySelector('.progress-label-text');
+  if (!text) return;
+  label.classList.toggle('is-active', active);
+  const styles = window.getComputedStyle(label);
+  const pad = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
+  const innerWidth = Math.max(0, label.clientWidth - pad);
+  const overflowing = text.scrollWidth > innerWidth + 1;
+  const shouldScroll = active && overflowing;
+  if (!shouldScroll) {
+    label.classList.remove('is-scrolling');
+    text.style.removeProperty('--marquee-shift');
+    text.style.removeProperty('--marquee-duration');
+    return;
+  }
+  const overflowPx = text.scrollWidth - innerWidth;
+  const scrollS = Math.max(1.25, overflowPx / 48);
+  text.style.setProperty('--marquee-shift', `-${overflowPx}px`);
+  text.style.setProperty('--marquee-duration', `${2 + scrollS}s`);
+  if (!label.classList.contains('is-scrolling')) {
+    label.classList.add('is-scrolling');
+  }
 }
 
 function updateContentProgress(time) {
@@ -824,6 +873,13 @@ function updateContentProgress(time) {
   if (!contentProgress.classList.contains('visible') || !duration) return;
   const bounded = Math.max(0, Math.min(duration, time || 0));
   contentProgressFill.style.width = `${bounded / duration * 100}%`;
+  contentProgressLabels.querySelectorAll('.content-progress-label').forEach((label) => {
+    const start = Number(label.dataset.start);
+    const end = Number(label.dataset.end);
+    const active = Number.isFinite(start) && Number.isFinite(end)
+      && bounded >= start && bounded < end;
+    syncChapterLabelMarquee(label, active);
+  });
 }
 
 // ── boot: 读 manifest → 建 tab → 加载默认语言 ───────────────────────────────

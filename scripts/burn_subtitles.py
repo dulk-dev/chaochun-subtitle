@@ -50,6 +50,12 @@ _CAPTION_STACK_TOP_INSET_RATIO = 0.08
 _CAPTION_BOTTOM_BREATHING_RATIO = 0.20
 _CAPTION_BOTTOM_PAD_MIN = 72
 _CAPTION_BOTTOM_PAD_MIN_BILINGUAL = 96
+# Active long chapter titles: native ASS \move+\clip marquee (Scheme A).
+_MARQUEE_HOLD_S = 1.0
+_MARQUEE_PX_PER_S = 48.0
+_MARQUEE_MIN_SCROLL_S = 1.25
+_MARQUEE_MIN_EVENT_S = 0.03
+_MARQUEE_WIDTH_SAFETY = 1.04
 _DEFAULT_BEAUTY_STRENGTH_PERCENT = 10.0
 _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
 _BRIGHTEN_LAYER_BRIGHTNESS = 0.08
@@ -827,15 +833,19 @@ def load_progress_chapters(
     return chapters
 
 
+def normalize_chapter_title(title: str) -> str:
+    """Collapse chapter titles onto a single visual line."""
+    return re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
+
+
 def fit_chapter_title(title: str, max_visual: float) -> str:
     """Keep a chapter label on one line; ellipsize when the slot is too narrow.
 
-    Scrolling/marquee of the full title is not burned in. libass has no stable
-    loop primitive, glyph widths are estimated, and chapter durations vary, so
-    ``\\move`` + ``\\clip`` would be fragile across players. Ellipsis is the
-    deterministic fallback.
+    Inactive (and non-overflowing) labels stay ellipsized. When the chapter is
+    the in-progress section and the full title exceeds the slot, ``_progress_events``
+    chains ``\\move`` + ``\\clip`` dialogues instead of this truncated string.
     """
-    title = re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
+    title = normalize_chapter_title(title)
     if max_visual <= 0:
         return ""
     if _visual_len(title) <= max_visual:
@@ -870,6 +880,170 @@ def chapter_slot_max_visual(slot_width_px: int, font_size: int) -> float:
     return usable / max(1.0, float(font_size))
 
 
+def chapter_title_needs_scroll(title: str, slot_width_px: int, font_size: int) -> bool:
+    """True when the full title exceeds the ellipsis budget for this slot."""
+    title = normalize_chapter_title(title)
+    return _visual_len(title) > chapter_slot_max_visual(slot_width_px, font_size)
+
+
+def chapter_title_width_px(title: str, font_size: int) -> float:
+    """Estimated rendered width; slight over-estimate so the last glyph stays in clip."""
+    return _visual_len(normalize_chapter_title(title)) * float(font_size) * _MARQUEE_WIDTH_SAFETY
+
+
+def chapter_label_clip_box(
+    start_x: int, end_x: int, font_size: int, top_pad: int
+) -> tuple[int, int, int, int]:
+    clip_left = int(start_x) + max(2, int(font_size * 0.12))
+    clip_right = max(clip_left + 1, int(end_x) - max(2, int(font_size * 0.12)))
+    return clip_left, 0, clip_right, int(top_pad)
+
+
+def chapter_marquee_travel(
+    title: str, clip_left: int, clip_right: int, font_size: int
+) -> tuple[int, int] | None:
+    """Left-aligned ``\\an4`` start/end x for a slot-clipped marquee, or None if it fits."""
+    text_w = chapter_title_width_px(title, font_size)
+    clip_width = max(1, int(clip_right) - int(clip_left))
+    if text_w <= clip_width:
+        return None
+    x_from = int(clip_left)
+    x_to = int(round(clip_right - text_w))
+    if x_to >= x_from:
+        return None
+    return x_from, x_to
+
+
+def plan_chapter_title_marquee(
+    start: float,
+    end: float,
+    x_from: int,
+    x_to: int,
+    y: int,
+    *,
+    hold_s: float = _MARQUEE_HOLD_S,
+    px_per_s: float = _MARQUEE_PX_PER_S,
+) -> list[dict]:
+    """Chain hold/scroll segments that ping-pong a title through its clip slot.
+
+    libass has no loop tag, so each segment is a separate Dialogue. A truncated
+    last segment interpolates ``x2`` instead of squeezing a full sweep into the
+    leftover duration. Short chapters drop extra holds and speed up so one full
+    pass still fits when possible.
+    """
+    start = float(start)
+    end = float(end)
+    x_from = int(x_from)
+    x_to = int(x_to)
+    y = int(y)
+    if end - start < _MARQUEE_MIN_EVENT_S:
+        return []
+    if x_from == x_to:
+        return [{"start": start, "end": end, "x1": x_from, "x2": x_to, "y": y, "moving": False}]
+
+    duration = end - start
+    distance = abs(x_to - x_from)
+    base_hold = max(0.0, float(hold_s))
+    scroll_s = max(_MARQUEE_MIN_SCROLL_S, distance / max(float(px_per_s), 1.0))
+    if duration < base_hold + scroll_s:
+        base_hold = min(base_hold, max(0.0, duration * 0.15))
+        remain = duration - base_hold
+        if remain >= 0.35:
+            scroll_s = remain
+        else:
+            base_hold = 0.0
+            scroll_s = duration
+
+    segments: list[dict] = []
+
+    def emit(t0: float, t1: float, xa: int, xb: int) -> None:
+        if t1 - t0 < _MARQUEE_MIN_EVENT_S:
+            return
+        if seconds_to_ass_time(t0) == seconds_to_ass_time(t1):
+            return
+        segments.append(
+            {
+                "start": t0,
+                "end": t1,
+                "x1": int(xa),
+                "x2": int(xb),
+                "y": y,
+                "moving": int(xa) != int(xb),
+            }
+        )
+
+    t = start
+    pos = x_from
+    target = x_to
+    at_end = True
+    full_dist = max(1, distance)
+    max_steps = max(8, int(duration / _MARQUEE_MIN_EVENT_S) + 4)
+    for _ in range(max_steps):
+        remaining = end - t
+        if remaining < _MARQUEE_MIN_EVENT_S:
+            break
+        if at_end and base_hold > 0:
+            hold = min(base_hold, remaining)
+            emit(t, t + hold, pos, pos)
+            t += hold
+            at_end = False
+            continue
+        remain_dist = abs(target - pos)
+        needed = scroll_s * (remain_dist / full_dist) if remain_dist else 0.0
+        if remain_dist < 1 or needed < _MARQUEE_MIN_EVENT_S:
+            pos = target
+            at_end = True
+            target = x_from if target == x_to else x_to
+            if remaining < max(base_hold, _MARQUEE_MIN_EVENT_S):
+                emit(t, end, pos, pos)
+                break
+            continue
+        this_scroll = min(needed, remaining)
+        frac = this_scroll / needed
+        new_pos = int(round(pos + (target - pos) * frac))
+        emit(t, t + this_scroll, pos, new_pos)
+        t += this_scroll
+        pos = new_pos
+        if frac >= 1.0 - 1e-6 or pos == target:
+            pos = target
+            at_end = True
+            target = x_from if target == x_to else x_to
+        else:
+            at_end = False
+            target = x_from if target == x_to else x_to
+    if not segments:
+        emit(start, end, x_from, x_to)
+    return segments
+
+
+def _progress_label_dialogue(
+    start: float,
+    end: float,
+    text: str,
+    *,
+    clip: tuple[int, int, int, int],
+    y: int,
+    align: int,
+    x: int | None = None,
+    x2: int | None = None,
+) -> str | None:
+    if seconds_to_ass_time(start) == seconds_to_ass_time(end) or end <= start:
+        return None
+    clip_left, clip_top, clip_right, clip_bottom = clip
+    tags = (
+        f"\\an{align}\\q2\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})"
+    )
+    if x2 is not None and x is not None and int(x) != int(x2):
+        tags += f"\\move({int(x)},{int(y)},{int(x2)},{int(y)})"
+    else:
+        tags += f"\\pos({int(x if x is not None else 0)},{int(y)})"
+    return (
+        f"Dialogue: 3,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},"
+        f"ProgressLabel,,0,0,0,,"
+        f"{{{tags}}}{_ass_escape(text)}"
+    )
+
+
 def _progress_events(
     chapters: list[dict], layout: dict, duration: float
 ) -> tuple[list[str], int, int]:
@@ -882,6 +1056,7 @@ def _progress_events(
     fill_y = layout["progress_fill_y"]
     label_y = layout["progress_label_y"]
     font_size = layout["progress_font"]
+    top_pad = layout["top_pad"]
     events = []
     for tick in range(int(math.ceil(duration))):
         start = float(tick)
@@ -908,18 +1083,56 @@ def _progress_events(
         end_x = int(video_width * float(chapter["end"]) / duration)
         slot_width = max(1, end_x - start_x)
         center_x = (start_x + end_x) // 2
-        label = fit_chapter_title(
-            str(chapter["title"]),
-            chapter_slot_max_visual(slot_width, font_size),
-        )
-        clip_left = start_x + max(2, int(font_size * 0.12))
-        clip_right = max(clip_left + 1, end_x - max(2, int(font_size * 0.12)))
-        events.append(
-            f"Dialogue: 3,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
-            f"ProgressLabel,,0,0,0,,"
-            f"{{\\an5\\q2\\clip({clip_left},0,{clip_right},{layout['top_pad']})\\pos({center_x},{label_y})}}"
-            f"{_ass_escape(label)}"
-        )
+        full_title = normalize_chapter_title(str(chapter["title"]))
+        max_visual = chapter_slot_max_visual(slot_width, font_size)
+        fitted = fit_chapter_title(full_title, max_visual)
+        clip = chapter_label_clip_box(start_x, end_x, font_size, top_pad)
+        chapter_start = float(chapter["start"])
+        chapter_end = min(float(chapter["end"]), duration)
+        needs_scroll = chapter_title_needs_scroll(full_title, slot_width, font_size)
+
+        def add_static(t0: float, t1: float, text: str, align: int = 5, x_pos: int | None = None) -> None:
+            line = _progress_label_dialogue(
+                t0,
+                t1,
+                text,
+                clip=clip,
+                y=label_y,
+                align=align,
+                x=center_x if x_pos is None else x_pos,
+            )
+            if line:
+                events.append(line)
+
+        if not needs_scroll:
+            add_static(0.0, duration, fitted)
+            continue
+
+        if chapter_start > 0:
+            add_static(0.0, chapter_start, fitted)
+        if chapter_end < duration:
+            add_static(chapter_end, duration, fitted)
+
+        travel = chapter_marquee_travel(full_title, clip[0], clip[2], font_size)
+        if travel is None:
+            add_static(chapter_start, chapter_end, full_title)
+            continue
+        x_from, x_to = travel
+        for segment in plan_chapter_title_marquee(
+            chapter_start, chapter_end, x_from, x_to, label_y
+        ):
+            line = _progress_label_dialogue(
+                segment["start"],
+                segment["end"],
+                full_title,
+                clip=clip,
+                y=label_y,
+                align=4,
+                x=segment["x1"],
+                x2=segment["x2"] if segment["moving"] else None,
+            )
+            if line:
+                events.append(line)
     return events, layout["top_pad"], font_size
 
 

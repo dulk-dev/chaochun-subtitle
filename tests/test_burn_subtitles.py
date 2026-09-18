@@ -419,10 +419,11 @@ class ChapterTitleFitTests(unittest.TestCase):
         self.assertLess(len(fitted), len(title))
         self.assertLessEqual(BURN_SUBTITLES._visual_len(fitted), 6.01)
 
-    def test_narrow_chapter_slot_ellipsizes_in_ass(self):
+    def test_narrow_chapter_slot_ellipsizes_when_inactive(self):
+        long_title = "这是一段非常非常长的核心方法说明标题"
         chapters = [
             {"title": "开头", "start": 0.0, "end": 90.0},
-            {"title": "这是一段非常非常长的核心方法说明标题", "start": 90.0, "end": 105.0},
+            {"title": long_title, "start": 90.0, "end": 105.0},
             {"title": "结尾", "start": 105.0, "end": 181.0},
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -436,24 +437,109 @@ class ChapterTitleFitTests(unittest.TestCase):
                 duration=181.0,
             )
             content = path.read_text(encoding="utf-8")
-        labels = [line for line in content.splitlines() if line.startswith("Dialogue") and "ProgressLabel" in line]
-        self.assertEqual(len(labels), 3)
-        self.assertIn("开头", labels[0])
-        self.assertIn("…", labels[1])
-        self.assertNotIn("这是一段非常非常长的核心方法说明标题", labels[1])
-        self.assertNotIn("\\N", labels[1])
-        self.assertIn("结尾", labels[2])
+        labels = [
+            line for line in content.splitlines()
+            if line.startswith("Dialogue") and "ProgressLabel" in line
+        ]
+        opening = [line for line in labels if line.endswith("开头")]
+        closing = [line for line in labels if line.endswith("结尾")]
+        inactive = [line for line in labels if "…" in line]
+        active = [line for line in labels if long_title in line]
+        self.assertEqual(len(opening), 1)
+        self.assertEqual(len(closing), 1)
+        self.assertTrue(all("0:00:00.00,0:03:01.00" in line for line in opening + closing))
+        self.assertGreaterEqual(len(inactive), 2)
+        self.assertTrue(all("\\move" not in line for line in opening + closing + inactive))
+        self.assertTrue(any("0:00:00.00,0:01:30.00" in line for line in inactive))
+        self.assertTrue(any("0:01:45.00,0:03:01.00" in line for line in inactive))
+        self.assertGreaterEqual(len(active), 1)
+        self.assertTrue(any("\\move" in line for line in active))
+        self.assertTrue(all("\\an4" in line and "\\clip(" in line for line in active))
+        self.assertTrue(all("\\N" not in line for line in labels))
+        for line in active:
+            start, end = line.split(",")[1], line.split(",")[2]
+            self.assertGreaterEqual(start, "0:01:30.00")
+            self.assertLessEqual(end, "0:01:45.00")
         layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, progress=True)
         slot_px = int(1920 * 15.0 / 181.0)
         fitted = BURN_SUBTITLES.fit_chapter_title(
-            chapters[1]["title"],
+            long_title,
             BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"]),
         )
-        self.assertEqual(fitted, labels[1].rsplit("}", 1)[-1])
+        self.assertIn("…", fitted)
+        self.assertEqual(fitted, inactive[0].rsplit("}", 1)[-1])
         self.assertLessEqual(
             BURN_SUBTITLES._visual_len(fitted) * layout["progress_font"],
             slot_px,
         )
+
+    def test_only_active_long_title_uses_move_clip_marquee(self):
+        chapters = [
+            {"title": "这是开场时一段很长很长很长的主题说明文字", "start": 0.0, "end": 60.0},
+            {"title": "这是正文里另一段很长很长很长的主题说明", "start": 60.0, "end": 120.0},
+            {"title": "结尾", "start": 120.0, "end": 181.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dual_scroll.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 1.0, "text": "测试", "en": "Test"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                chapters=chapters,
+                duration=181.0,
+                bilingual=True,
+            )
+            content = path.read_text(encoding="utf-8")
+        labels = [
+            line for line in content.splitlines()
+            if line.startswith("Dialogue") and "ProgressLabel" in line
+        ]
+        first_full = [line for line in labels if chapters[0]["title"] in line]
+        second_full = [line for line in labels if chapters[1]["title"] in line]
+        self.assertTrue(any("\\move" in line for line in first_full))
+        self.assertTrue(any("\\move" in line for line in second_full))
+        for line in first_full:
+            end = line.split(",")[2]
+            self.assertLessEqual(end, "0:01:00.00")
+        for line in second_full:
+            start = line.split(",")[1]
+            self.assertGreaterEqual(start, "0:01:00.00")
+            end = line.split(",")[2]
+            self.assertLessEqual(end, "0:02:00.00")
+        self.assertTrue(any("\\pos(" in line and "…" in line for line in labels))
+        self.assertTrue(any(line.endswith("结尾") for line in labels))
+        self.assertIn("Style: CaptionZh,", content)
+        self.assertIn("Style: CaptionEn,", content)
+        self.assertIn("测试", content)
+        self.assertIn("Test", content)
+
+    def test_marquee_plan_ping_pongs_and_truncates_last_travel(self):
+        segments = BURN_SUBTITLES.plan_chapter_title_marquee(
+            0.0, 13.0, 200, 40, 24, hold_s=1.0, px_per_s=40.0
+        )
+        self.assertGreaterEqual(len(segments), 4)
+        self.assertFalse(segments[0]["moving"])
+        self.assertEqual(segments[0]["x1"], 200)
+        self.assertTrue(segments[1]["moving"])
+        self.assertEqual(segments[1]["x1"], 200)
+        self.assertEqual(segments[1]["x2"], 40)
+        self.assertAlmostEqual(segments[1]["end"] - segments[1]["start"], 4.0)
+        self.assertAlmostEqual(segments[-1]["end"], 13.0)
+        self.assertTrue(segments[-1]["moving"])
+        self.assertLess(abs(segments[-1]["x2"] - segments[-1]["x1"]), 160)
+        covered = sum(item["end"] - item["start"] for item in segments)
+        self.assertAlmostEqual(covered, 13.0, places=2)
+
+    def test_short_chapter_speeds_up_to_finish_one_pass(self):
+        segments = BURN_SUBTITLES.plan_chapter_title_marquee(
+            10.0, 12.0, 300, 20, 24, hold_s=1.0, px_per_s=40.0
+        )
+        moving = [item for item in segments if item["moving"]]
+        self.assertEqual(len(moving), 1)
+        self.assertEqual(moving[0]["x1"], 300)
+        self.assertEqual(moving[0]["x2"], 20)
+        self.assertLess(moving[0]["end"] - moving[0]["start"], 2.0)
 
     def test_newlines_and_spaces_collapse_to_one_line(self):
         self.assertEqual(
