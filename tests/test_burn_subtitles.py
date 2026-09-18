@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -419,7 +420,7 @@ class ChapterTitleFitTests(unittest.TestCase):
         self.assertLess(len(fitted), len(title))
         self.assertLessEqual(BURN_SUBTITLES._visual_len(fitted), 6.01)
 
-    def test_narrow_chapter_slot_ellipsizes_in_ass(self):
+    def test_narrow_chapter_slot_ellipsizes_when_inactive(self):
         chapters = [
             {"title": "开头", "start": 0.0, "end": 90.0},
             {"title": "这是一段非常非常长的核心方法说明标题", "start": 90.0, "end": 105.0},
@@ -436,24 +437,120 @@ class ChapterTitleFitTests(unittest.TestCase):
                 duration=181.0,
             )
             content = path.read_text(encoding="utf-8")
-        labels = [line for line in content.splitlines() if line.startswith("Dialogue") and "ProgressLabel" in line]
-        self.assertEqual(len(labels), 3)
-        self.assertIn("开头", labels[0])
-        self.assertIn("…", labels[1])
-        self.assertNotIn("这是一段非常非常长的核心方法说明标题", labels[1])
-        self.assertNotIn("\\N", labels[1])
-        self.assertIn("结尾", labels[2])
+        static = [
+            line for line in content.splitlines()
+            if line.startswith("Dialogue: 3,") and "ProgressLabel" in line
+        ]
+        moving = [
+            line for line in content.splitlines()
+            if line.startswith("Dialogue: 4,") and "\\move(" in line
+        ]
+        self.assertGreaterEqual(len(static), 3)
+        self.assertTrue(any("开头" in line and "0:00:00.00,0:03:01.00" in line for line in static))
+        self.assertTrue(any("结尾" in line and "0:00:00.00,0:03:01.00" in line for line in static))
+        long_static = [line for line in static if "…" in line]
+        self.assertTrue(long_static)
+        self.assertTrue(all("这是一段非常非常长的核心方法说明标题" not in line for line in long_static))
+        self.assertTrue(any("0:01:30.00" in line and "0:01:45.00" not in line.split("ProgressLabel")[0] for line in long_static))
+        self.assertTrue(moving)
+        self.assertTrue(all("\\move(" in line and "\\clip(" in line for line in moving))
+        self.assertTrue(all("这是一段非常非常长的核心方法说明标题" in line for line in moving))
+        self.assertTrue(all("\\N" not in line.split("}", 1)[-1] for line in moving))
+        self.assertTrue(any(line.startswith("Dialogue: 4,0:01:30.00,") for line in moving))
         layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, progress=True)
         slot_px = int(1920 * 15.0 / 181.0)
         fitted = BURN_SUBTITLES.fit_chapter_title(
             chapters[1]["title"],
             BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"]),
         )
-        self.assertEqual(fitted, labels[1].rsplit("}", 1)[-1])
+        self.assertIn(fitted, {line.rsplit("}", 1)[-1] for line in long_static})
         self.assertLessEqual(
             BURN_SUBTITLES._visual_len(fitted) * layout["progress_font"],
             slot_px,
         )
+
+    def test_fitting_titles_do_not_emit_move_events(self):
+        chapters = [
+            {"title": "开场", "start": 0.0, "end": 90.0},
+            {"title": "正文", "start": 90.0, "end": 181.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "static.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 1.0, "text": "测试"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                chapters=chapters,
+                duration=181.0,
+            )
+            content = path.read_text(encoding="utf-8")
+        self.assertNotIn("\\move(", content)
+        labels = [line for line in content.splitlines() if "ProgressLabel" in line and line.startswith("Dialogue")]
+        self.assertEqual(len(labels), 2)
+
+    def test_active_chapter_marquee_shifts_pixels_in_burned_frames(self):
+        chapters = [
+            {"title": "开头", "start": 0.0, "end": 1.0},
+            {"title": "这是一段非常非常长的核心方法说明标题", "start": 1.0, "end": 4.0},
+            {"title": "结尾", "start": 4.0, "end": 8.0},
+        ]
+        layout = BURN_SUBTITLES.letterbox_layout(1280, 720, bilingual=True, progress=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ass_path = root / "marquee.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 0.5, "text": "测试", "en": "Test"}],
+                ass_path,
+                video_width=1280,
+                video_height=720,
+                chapters=chapters,
+                duration=8.0,
+                bilingual=True,
+            )
+            content = ass_path.read_text(encoding="utf-8")
+            self.assertIn("\\move(", content)
+            video = root / "src.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi",
+                    "-i", "color=c=0x101010:s=1280x720:r=25:d=8",
+                    "-pix_fmt", "yuv420p",
+                    str(video),
+                ],
+                check=True,
+            )
+            pad = BURN_SUBTITLES.letterbox_pad_filter(layout)
+            ass_filter = (
+                "ass='"
+                + str(ass_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+                + "'"
+            )
+            slot_left = int(layout["canvas_width"] * 1.0 / 8.0)
+            slot_right = int(layout["canvas_width"] * 4.0 / 8.0)
+            slot_w = max(1, slot_right - slot_left)
+            crop = f"crop={slot_w}:{layout['top_pad']}:{slot_left}:0"
+            frames = {}
+            # 1.20 and 1.80 share the same 1s progress-fill rectangle, so
+            # pixel diffs in this crop come from the title moving, not the bar.
+            for stamp, name in ((0.40, "idle"), (1.20, "marquee_a"), (1.80, "marquee_b"), (5.00, "after")):
+                out = root / f"{name}.png"
+                subprocess.run(
+                    [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", str(video),
+                        "-vf", f"{pad},{ass_filter},{crop}",
+                        "-ss", str(stamp),
+                        "-frames:v", "1",
+                        str(out),
+                    ],
+                    check=True,
+                )
+                frames[name] = out.read_bytes()
+        self.assertNotEqual(frames["marquee_a"], frames["marquee_b"])
+        self.assertNotEqual(frames["idle"], frames["marquee_a"])
+        self.assertNotEqual(frames["marquee_b"], frames["after"])
 
     def test_newlines_and_spaces_collapse_to_one_line(self):
         self.assertEqual(

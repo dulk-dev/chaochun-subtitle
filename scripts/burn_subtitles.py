@@ -20,6 +20,16 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+from chapter_title import (
+    chapter_slot_max_visual,
+    fit_chapter_title,
+    marquee_move_cycles,
+    preview_marquee_constants,
+    slot_clip_box,
+    static_label_windows,
+    title_needs_marquee,
+    visual_len as _visual_len,
+)
 from subtitle_text import add_cjk_spacing
 from user_config import resolve_glossary_path as resolve_user_glossary_path
 from user_config import resolve_progress_enabled
@@ -119,22 +129,6 @@ def _apply_display_replacements(text: str) -> str:
     return text
 
 
-def _visual_len(text: str) -> float:
-    """Visual width estimate: CJK = 1.0, Latin/digits/punct = 0.55, space = 0.5."""
-    w = 0.0
-    for c in text:
-        if (
-            '\u4e00' <= c <= '\u9fff'
-            or '\u3400' <= c <= '\u4dbf'
-            or '\u3000' <= c <= '\u303f'
-            or c == '…'
-        ):
-            w += 1.0
-        elif c == ' ':
-            w += 0.5
-        else:
-            w += 0.55
-    return w
 
 
 def _split_text(text: str, max_chars: int) -> list[str]:
@@ -730,6 +724,7 @@ def preview_layout_payload(layout: dict) -> dict:
         "progress_font_frac": layout["progress_font"] / canvas_h,
         "stack_top_inset_bar_frac": layout.get("stack_top_inset", 0) / bottom,
         "stack_gap_bar_frac": layout.get("stack_gap", 0) / bottom,
+        "marquee": preview_marquee_constants(),
     }
 
 
@@ -827,53 +822,14 @@ def load_progress_chapters(
     return chapters
 
 
-def fit_chapter_title(title: str, max_visual: float) -> str:
-    """Keep a chapter label on one line; ellipsize when the slot is too narrow.
-
-    Scrolling/marquee of the full title is not burned in. libass has no stable
-    loop primitive, glyph widths are estimated, and chapter durations vary, so
-    ``\\move`` + ``\\clip`` would be fragile across players. Ellipsis is the
-    deterministic fallback.
-    """
-    title = re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
-    if max_visual <= 0:
-        return ""
-    if _visual_len(title) <= max_visual:
-        return title
-    ellipsis = "…"
-    ellipsis_w = _visual_len(ellipsis)
-    if max_visual <= ellipsis_w:
-        return ellipsis
-    budget = max_visual - ellipsis_w
-    cut = 0
-    width = 0.0
-    for index, char in enumerate(title):
-        char_w = _visual_len(char)
-        if width + char_w > budget:
-            break
-        width += char_w
-        cut = index + 1
-    if cut <= 0:
-        return ellipsis
-    return title[:cut].rstrip() + ellipsis
-
-
-def chapter_slot_max_visual(slot_width_px: int, font_size: int) -> float:
-    """Visual-width budget for a chapter title inside its progress slot.
-
-    ASS CJK glyphs are about one em wide. A 0.72 em factor overflowed short
-    slots, so the clip box cut through the label instead of showing a clean
-    ellipsis inside the section.
-    """
-    pad = max(10, int(font_size * 0.40))
-    usable = max(1, int(slot_width_px) - pad * 2)
-    return usable / max(1.0, float(font_size))
-
-
 def _progress_events(
     chapters: list[dict], layout: dict, duration: float
 ) -> tuple[list[str], int, int]:
-    """Draw chapter directory and a translucent fill in one top-letterbox band."""
+    """Draw chapter directory and a translucent fill in one top-letterbox band.
+
+    Scheme C: only the in-progress overflowing title scrolls (ASS ``\\move``
+    + ``\\clip`` cycles). Other labels stay ellipsized and static.
+    """
     if not chapters:
         return [], 0, layout.get("progress_font", 12)
     duration = max(duration, 0.01)
@@ -908,18 +864,48 @@ def _progress_events(
         end_x = int(video_width * float(chapter["end"]) / duration)
         slot_width = max(1, end_x - start_x)
         center_x = (start_x + end_x) // 2
-        label = fit_chapter_title(
-            str(chapter["title"]),
-            chapter_slot_max_visual(slot_width, font_size),
+        title = str(chapter["title"])
+        overflowing = title_needs_marquee(title, slot_width, font_size)
+        fitted = fit_chapter_title(
+            title, chapter_slot_max_visual(slot_width, font_size)
         )
-        clip_left = start_x + max(2, int(font_size * 0.12))
-        clip_right = max(clip_left + 1, end_x - max(2, int(font_size * 0.12)))
-        events.append(
-            f"Dialogue: 3,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
-            f"ProgressLabel,,0,0,0,,"
-            f"{{\\an5\\q2\\clip({clip_left},0,{clip_right},{layout['top_pad']})\\pos({center_x},{label_y})}}"
-            f"{_ass_escape(label)}"
+        clip_left, clip_top, clip_right, clip_bottom = slot_clip_box(
+            start_x, end_x, font_size, layout["top_pad"]
         )
+        clip_tag = f"\\clip({clip_left},{clip_top},{clip_right},{clip_bottom})"
+        for window_start, window_end in static_label_windows(
+            chapter_start=float(chapter["start"]),
+            chapter_end=float(chapter["end"]),
+            duration=duration,
+            overflowing=overflowing,
+        ):
+            events.append(
+                f"Dialogue: 3,{seconds_to_ass_time(window_start)},{seconds_to_ass_time(window_end)},"
+                f"ProgressLabel,,0,0,0,,"
+                f"{{\\an5\\q2{clip_tag}\\pos({center_x},{label_y})}}"
+                f"{_ass_escape(fitted)}"
+            )
+        if not overflowing:
+            continue
+        for cycle in marquee_move_cycles(
+            title,
+            slot_left=start_x,
+            slot_right=end_x,
+            font_size=font_size,
+            label_y=label_y,
+            top_pad=layout["top_pad"],
+            chapter_start=float(chapter["start"]),
+            chapter_end=float(chapter["end"]),
+        ):
+            cx1, cy1, cx2, cy2 = cycle["clip"]
+            events.append(
+                f"Dialogue: 4,{seconds_to_ass_time(cycle['start'])},"
+                f"{seconds_to_ass_time(cycle['end'])},"
+                f"ProgressLabel,,0,0,0,,"
+                f"{{\\an4\\q2\\clip({cx1},{cy1},{cx2},{cy2})"
+                f"\\move({cycle['x1']},{cycle['y']},{cycle['x2']},{cycle['y']})}}"
+                f"{_ass_escape(cycle['text'])}"
+            )
     return events, layout["top_pad"], font_size
 
 

@@ -59,6 +59,12 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("text-overflow: ellipsis", label.group("rules"))
         self.assertIn("white-space: nowrap", label.group("rules"))
         self.assertIn("--lb-progress-font", label.group("rules"))
+        self.assertIn("text-overflow: clip", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("@keyframes chapter-marquee", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("updateActiveChapterMarquee", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("titleNeedsMarquee", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("marquee-track", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("dataset.overflow", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("clamp(", label.group("rules"))
         self.assertNotIn("3.0vw", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn("--lb-top-frac", PREVIEW_EDITOR.HTML_TEMPLATE)
@@ -133,6 +139,8 @@ class LetterboxApiTests(unittest.TestCase):
         self.assertEqual(payload["zh_font"], expected["zh_font"])
         self.assertEqual(payload["en_font"], expected["en_font"])
         self.assertEqual(payload["progress_font"], expected["progress_font"])
+        self.assertEqual(payload["marquee"], expected["marquee"])
+        self.assertAlmostEqual(payload["marquee"]["em_per_sec"], 0.9)
         self.assertAlmostEqual(payload["top_frac"], layout["top_pad"] / layout["canvas_height"])
         self.assertAlmostEqual(
             payload["en_font"] / payload["zh_font"], 0.48, places=2

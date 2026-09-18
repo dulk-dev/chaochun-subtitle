@@ -264,6 +264,27 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Scheme C: only the in-progress overflowing chapter scrolls. */
+  .content-progress-label.is-active.is-overflowing {
+    justify-content: flex-start;
+    text-align: left;
+    text-overflow: clip;
+  }
+  .content-progress-label .marquee-track {
+    display: inline-flex;
+    flex-shrink: 0;
+    will-change: transform;
+    animation: chapter-marquee var(--marquee-duration, 8s) linear infinite;
+  }
+  .content-progress-label .marquee-text {
+    flex: none;
+    white-space: nowrap;
+    padding-right: var(--marquee-gap, 2em);
+  }
+  @keyframes chapter-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
 
   /* ---- list pane: always-visible right panel ---- */
   .list-pane {
@@ -770,6 +791,7 @@ function applyLetterboxLayout(layout) {
   videoStage.style.setProperty('--lb-progress-font', String(layout.progress_font));
   videoStage.style.setProperty('--lb-stack-inset-frac', String(layout.stack_top_inset_bar_frac || 0));
   videoStage.style.setProperty('--lb-stack-gap-frac', String(layout.stack_gap_bar_frac || 0));
+  measureChapterLabelOverflow();
 }
 
 async function refreshLetterboxLayout() {
@@ -799,6 +821,7 @@ function setupContentProgress() {
   videoPaneEl.classList.toggle('has-progress', enabled);
   contentProgressMarkers.replaceChildren();
   contentProgressLabels.replaceChildren();
+  activeChapterIdx = -1;
   if (!enabled) return;
   chapters.forEach((chapter, index) => {
     const startPercent = Math.max(0, Math.min(100, Number(chapter.start) / duration * 100));
@@ -813,10 +836,123 @@ function setupContentProgress() {
     label.className = 'content-progress-label';
     label.style.left = `${startPercent}%`;
     label.style.width = `${endPercent - startPercent}%`;
-    label.textContent = chapter.title || `第 ${index + 1} 节`;
+    const title = chapter.title || `第 ${index + 1} 节`;
+    const slotPx = (endPercent - startPercent) / 100 * Number(letterboxLayout.canvas_width || 1920);
+    label.dataset.fullTitle = title;
+    label.dataset.slotPx = String(slotPx);
+    label.dataset.index = String(index);
+    label.textContent = title;
     contentProgressLabels.appendChild(label);
   });
+  measureChapterLabelOverflow();
   updateContentProgress(vid.currentTime || 0);
+}
+
+function marqueeUnits() {
+  return (letterboxLayout && letterboxLayout.marquee) || DEFAULT_LAYOUT.marquee || {
+    cjk_unit: 1, latin_unit: 0.55, space_unit: 0.5,
+    em_per_sec: 0.9, gap_em: 2, slot_pad_em: 0.4, slot_pad_min_px: 10
+  };
+}
+
+function visualLen(text) {
+  const units = marqueeUnits();
+  let width = 0;
+  for (const char of String(text || '')) {
+    const code = char.codePointAt(0);
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0x3000 && code <= 0x303f) ||
+      char === '…'
+    ) width += units.cjk_unit;
+    else if (char === ' ') width += units.space_unit;
+    else width += units.latin_unit;
+  }
+  return width;
+}
+
+function titleNeedsMarquee(title, slotWidthPx, fontSize) {
+  const units = marqueeUnits();
+  const pad = Math.max(units.slot_pad_min_px, Math.floor(fontSize * units.slot_pad_em));
+  const usable = Math.max(1, Number(slotWidthPx) - pad * 2);
+  const maxVisual = usable / Math.max(1, Number(fontSize) || 1);
+  return visualLen(title) > maxVisual + 1e-6;
+}
+
+function marqueeCycleSeconds(title) {
+  const units = marqueeUnits();
+  const emPerSec = Number(units.em_per_sec) || 0.9;
+  return (visualLen(title) + Number(units.gap_em || 2)) / emPerSec;
+}
+
+function measureChapterLabelOverflow() {
+  if (!contentProgressLabels) return;
+  const fontSize = Number(letterboxLayout?.progress_font || DEFAULT_LAYOUT.progress_font || 43);
+  contentProgressLabels.querySelectorAll('.content-progress-label').forEach(label => {
+    if (label.classList.contains('is-active') && label.querySelector('.marquee-track')) {
+      return;
+    }
+    const title = label.dataset.fullTitle || label.textContent || '';
+    const slotPx = Number(label.dataset.slotPx || 0);
+    const hinted = titleNeedsMarquee(title, slotPx, fontSize);
+    const measured = label.scrollWidth > label.clientWidth + 1;
+    const overflows = hinted || measured;
+    label.dataset.overflow = overflows ? '1' : '0';
+    label.classList.toggle('is-overflowing', overflows);
+  });
+}
+
+function activeChapterIndex(time) {
+  if (!chapters.length) return -1;
+  const t = Number(time) || 0;
+  for (let i = 0; i < chapters.length; i++) {
+    const start = Number(chapters[i].start);
+    const end = Number(chapters[i].end);
+    const last = i === chapters.length - 1;
+    if (t >= start && (last ? t <= end : t < end)) return i;
+  }
+  return -1;
+}
+
+let activeChapterIdx = -1;
+
+function stopChapterMarquee(label) {
+  if (!label) return;
+  label.classList.remove('is-active');
+  const title = label.dataset.fullTitle || '';
+  label.replaceChildren();
+  label.textContent = title;
+}
+
+function startChapterMarquee(label) {
+  if (!label) return;
+  label.classList.add('is-active');
+  if (label.dataset.overflow !== '1') return;
+  const title = label.dataset.fullTitle || '';
+  const units = marqueeUnits();
+  label.replaceChildren();
+  const track = document.createElement('span');
+  track.className = 'marquee-track';
+  track.style.setProperty('--marquee-duration', `${marqueeCycleSeconds(title)}s`);
+  track.style.setProperty('--marquee-gap', `${units.gap_em}em`);
+  const first = document.createElement('span');
+  first.className = 'marquee-text';
+  first.textContent = title;
+  const second = first.cloneNode(true);
+  second.setAttribute('aria-hidden', 'true');
+  track.append(first, second);
+  label.append(track);
+  void track.offsetWidth;
+}
+
+function updateActiveChapterMarquee(time) {
+  const idx = activeChapterIndex(time);
+  if (idx === activeChapterIdx) return;
+  const labels = [...contentProgressLabels.querySelectorAll('.content-progress-label')];
+  if (activeChapterIdx >= 0) stopChapterMarquee(labels[activeChapterIdx]);
+  activeChapterIdx = idx;
+  if (idx >= 0) startChapterMarquee(labels[idx]);
 }
 
 function updateContentProgress(time) {
@@ -824,6 +960,7 @@ function updateContentProgress(time) {
   if (!contentProgress.classList.contains('visible') || !duration) return;
   const bounded = Math.max(0, Math.min(duration, time || 0));
   contentProgressFill.style.width = `${bounded / duration * 100}%`;
+  updateActiveChapterMarquee(bounded);
 }
 
 // ── boot: 读 manifest → 建 tab → 加载默认语言 ───────────────────────────────
@@ -931,6 +1068,7 @@ vid.addEventListener('timeupdate', () => {
   syncCurSub();
   updateContentProgress(vid.currentTime);
 });
+vid.addEventListener('seeked', () => updateContentProgress(vid.currentTime));
 vid.addEventListener('loadedmetadata', () => {
   disableNativeTextTracks();
   setupContentProgress();
