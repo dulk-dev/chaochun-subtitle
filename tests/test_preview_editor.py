@@ -65,6 +65,8 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("titleNeedsMarquee", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn("marquee-track", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn("dataset.overflow", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("animationDelay", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("animationPlayState", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("clamp(", label.group("rules"))
         self.assertNotIn("3.0vw", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertIn("--lb-top-frac", PREVIEW_EDITOR.HTML_TEMPLATE)

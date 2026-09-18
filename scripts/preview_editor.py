@@ -925,17 +925,23 @@ function stopChapterMarquee(label) {
   label.textContent = title;
 }
 
-function startChapterMarquee(label) {
+function startChapterMarquee(label, time) {
   if (!label) return;
   label.classList.add('is-active');
   if (label.dataset.overflow !== '1') return;
   const title = label.dataset.fullTitle || '';
   const units = marqueeUnits();
+  const cycle = marqueeCycleSeconds(title);
+  const chapterStart = Number(chapters[Number(label.dataset.index)]?.start || 0);
+  const elapsed = Math.max(0, (Number(time) || 0) - chapterStart);
+  const offset = cycle > 0 ? elapsed % cycle : 0;
   label.replaceChildren();
   const track = document.createElement('span');
   track.className = 'marquee-track';
-  track.style.setProperty('--marquee-duration', `${marqueeCycleSeconds(title)}s`);
+  track.style.setProperty('--marquee-duration', `${cycle}s`);
   track.style.setProperty('--marquee-gap', `${units.gap_em}em`);
+  track.style.animationDelay = `-${offset}s`;
+  track.style.animationPlayState = (vid && !vid.paused) ? 'running' : 'paused';
   const first = document.createElement('span');
   first.className = 'marquee-text';
   first.textContent = title;
@@ -946,21 +952,27 @@ function startChapterMarquee(label) {
   void track.offsetWidth;
 }
 
-function updateActiveChapterMarquee(time) {
+function updateActiveChapterMarquee(time, restart) {
   const idx = activeChapterIndex(time);
-  if (idx === activeChapterIdx) return;
   const labels = [...contentProgressLabels.querySelectorAll('.content-progress-label')];
-  if (activeChapterIdx >= 0) stopChapterMarquee(labels[activeChapterIdx]);
-  activeChapterIdx = idx;
-  if (idx >= 0) startChapterMarquee(labels[idx]);
+  if (idx !== activeChapterIdx) {
+    if (activeChapterIdx >= 0) stopChapterMarquee(labels[activeChapterIdx]);
+    activeChapterIdx = idx;
+    if (idx >= 0) startChapterMarquee(labels[idx], time);
+    return;
+  }
+  if (restart && idx >= 0 && labels[idx]) {
+    stopChapterMarquee(labels[idx]);
+    startChapterMarquee(labels[idx], time);
+  }
 }
 
-function updateContentProgress(time) {
+function updateContentProgress(time, restart) {
   const duration = Number(manifest?.duration || vid.duration || 0);
   if (!contentProgress.classList.contains('visible') || !duration) return;
   const bounded = Math.max(0, Math.min(duration, time || 0));
   contentProgressFill.style.width = `${bounded / duration * 100}%`;
-  updateActiveChapterMarquee(bounded);
+  updateActiveChapterMarquee(bounded, restart);
 }
 
 // ── boot: 读 manifest → 建 tab → 加载默认语言 ───────────────────────────────
@@ -1030,8 +1042,14 @@ function setAudio(L) {
 
 vid.addEventListener('play', () => {
   if (vid.muted && dubAudio.src) { dubAudio.currentTime = vid.currentTime; dubAudio.play().catch(() => {}); }
+  const track = document.querySelector('.content-progress-label.is-active .marquee-track');
+  if (track) track.style.animationPlayState = 'running';
 });
-vid.addEventListener('pause', () => dubAudio.pause());
+vid.addEventListener('pause', () => {
+  dubAudio.pause();
+  const track = document.querySelector('.content-progress-label.is-active .marquee-track');
+  if (track) track.style.animationPlayState = 'paused';
+});
 vid.addEventListener('ended', () => dubAudio.pause());
 vid.addEventListener('seeking', () => { if (vid.muted && dubAudio.src) dubAudio.currentTime = vid.currentTime; });
 vid.addEventListener('ratechange', () => { dubAudio.playbackRate = vid.playbackRate; });
@@ -1068,7 +1086,7 @@ vid.addEventListener('timeupdate', () => {
   syncCurSub();
   updateContentProgress(vid.currentTime);
 });
-vid.addEventListener('seeked', () => updateContentProgress(vid.currentTime));
+vid.addEventListener('seeked', () => updateContentProgress(vid.currentTime, true));
 vid.addEventListener('loadedmetadata', () => {
   disableNativeTextTracks();
   setupContentProgress();
