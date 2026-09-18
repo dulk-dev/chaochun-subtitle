@@ -264,6 +264,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .content-progress-label.is-scrolling {
+    text-overflow: clip;
+  }
 
   /* ---- list pane: always-visible right panel ---- */
   .list-pane {
@@ -701,6 +704,180 @@ function fmtSeg(seg) {
   return `${fmt(seg.start)} → ${fmt(seg.end)}`;
 }
 
+const ACTIVE_TITLE_HOLD_START = 0.80;
+const ACTIVE_TITLE_HOLD_END = 1.00;
+const ACTIVE_TITLE_STEP = 0.30;
+const ACTIVE_TITLE_MIN_EVENT = 0.12;
+const ACTIVE_TITLE_MAX_EVENTS = 240;
+const ACTIVE_TITLE_LOOP_GAP = 0.55;
+
+function visualLen(text) {
+  let width = 0;
+  for (const ch of String(text || '')) {
+    const code = ch.codePointAt(0);
+    if (
+      (code >= 0x4e00 && code <= 0x9fff)
+      || (code >= 0x3400 && code <= 0x4dbf)
+      || (code >= 0x3000 && code <= 0x303f)
+      || ch === '…'
+    ) width += 1;
+    else if (ch === ' ') width += 0.5;
+    else width += 0.55;
+  }
+  return width;
+}
+
+function normalizeChapterTitle(title) {
+  return String(title || '').replace(/\s+/g, ' ').trim();
+}
+
+function titlePrefixForWidth(text, maxVisual) {
+  if (maxVisual <= 0 || !text) return '';
+  let cut = 0;
+  let width = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const charW = visualLen(text[index]);
+    if (width + charW > maxVisual) break;
+    width += charW;
+    cut = index + 1;
+  }
+  return cut ? text.slice(0, cut) : text.slice(0, 1);
+}
+
+function fitChapterTitle(title, maxVisual) {
+  title = normalizeChapterTitle(title);
+  if (maxVisual <= 0) return '';
+  if (visualLen(title) <= maxVisual) return title;
+  if (maxVisual <= 1) return '…';
+  const prefix = titlePrefixForWidth(title, maxVisual - 1).replace(/\s+$/, '');
+  return prefix ? `${prefix}…` : '…';
+}
+
+function chapterTitleWindows(title, maxVisual) {
+  title = normalizeChapterTitle(title);
+  if (maxVisual <= 0) return [''];
+  if (!title || visualLen(title) <= maxVisual) return [title];
+  const windows = [];
+  let start = 0;
+  while (start < title.length) {
+    const remaining = title.slice(start);
+    if (visualLen(remaining) <= maxVisual) {
+      if (!windows.length || windows[windows.length - 1] !== remaining) windows.push(remaining);
+      break;
+    }
+    const window = titlePrefixForWidth(remaining, maxVisual);
+    if (!window) break;
+    if (!windows.length || windows[windows.length - 1] !== window) windows.push(window);
+    start += 1;
+  }
+  return windows.length ? windows : [fitChapterTitle(title, maxVisual)];
+}
+
+function subsampleTitleWindows(windows, count) {
+  if (!windows.length) return [];
+  if (count <= 1) return [windows[0]];
+  if (count >= windows.length) return windows.slice();
+  const picked = [];
+  for (let index = 0; index < count; index += 1) {
+    const src = Math.round(index * (windows.length - 1) / (count - 1));
+    const text = windows[src];
+    if (!picked.length || picked[picked.length - 1] !== text) picked.push(text);
+  }
+  picked[0] = windows[0];
+  picked[picked.length - 1] = windows[windows.length - 1];
+  return picked;
+}
+
+function titleWindowDurations(count, budget) {
+  if (count <= 1) return [Math.max(budget, 0)];
+  let holdStart = Math.min(ACTIVE_TITLE_HOLD_START, budget * 0.16);
+  let holdEnd = Math.min(ACTIVE_TITLE_HOLD_END, budget * 0.20);
+  let rest = budget - holdStart - holdEnd;
+  if (rest < count * ACTIVE_TITLE_MIN_EVENT) {
+    holdStart = 0;
+    holdEnd = 0;
+    rest = budget;
+  }
+  const step = rest / count;
+  const durations = Array(count).fill(step);
+  durations[0] += holdStart;
+  durations[count - 1] += holdEnd;
+  const total = durations.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return Array(count).fill(budget / count);
+  return durations.map(value => value * (budget / total));
+}
+
+function eventsForTitleSpan(shown, spanStart, spanEnd) {
+  const durations = titleWindowDurations(shown.length, spanEnd - spanStart);
+  const events = [];
+  let cursor = spanStart;
+  shown.forEach((text, index) => {
+    const cursorEnd = cursor + durations[index];
+    events.push([cursor, Math.min(cursorEnd, spanEnd), text]);
+    cursor = cursorEnd;
+  });
+  if (events.length) events[events.length - 1][1] = spanEnd;
+  else if (shown.length) events.push([spanStart, spanEnd, shown[0]]);
+  return events;
+}
+
+function scheduleChapterTitleWindows(windows, start, end) {
+  const duration = Math.max(0, end - start);
+  if (!windows.length || duration <= 0) return [];
+  const maxByTime = Math.max(1, Math.floor(duration / ACTIVE_TITLE_MIN_EVENT));
+  const shown = subsampleTitleWindows(
+    windows,
+    Math.min(windows.length, maxByTime, ACTIVE_TITLE_MAX_EVENTS)
+  );
+  if (shown.length === 1) return [[start, end, shown[0]]];
+  const holdStart = Math.min(ACTIVE_TITLE_HOLD_START, duration * 0.16);
+  const holdEnd = Math.min(ACTIVE_TITLE_HOLD_END, duration * 0.20);
+  const passLen = Math.max(
+    shown.length * ACTIVE_TITLE_MIN_EVENT,
+    holdStart + shown.length * ACTIVE_TITLE_STEP + holdEnd
+  );
+  if (duration < passLen * 1.75) return eventsForTitleSpan(shown, start, end);
+  const events = [];
+  let cursor = start;
+  while (cursor < end - 0.001) {
+    const remaining = end - cursor;
+    if (events.length && remaining < passLen * 0.45) {
+      events.push([cursor, end, shown[shown.length - 1]]);
+      break;
+    }
+    const spanEnd = cursor + Math.min(passLen, remaining);
+    events.push(...eventsForTitleSpan(shown, cursor, spanEnd));
+    cursor = spanEnd;
+    if (cursor >= end) break;
+    const gapEnd = Math.min(cursor + ACTIVE_TITLE_LOOP_GAP, end);
+    if (gapEnd > cursor) {
+      events.push([cursor, gapEnd, shown[shown.length - 1]]);
+      cursor = gapEnd;
+    }
+  }
+  if (events.length) events[events.length - 1][1] = end;
+  return events;
+}
+
+function chapterTitleAt(title, maxVisual, localTime, chapterDuration, active) {
+  title = normalizeChapterTitle(title);
+  if (!active || chapterDuration <= 0) return fitChapterTitle(title, maxVisual);
+  const windows = chapterTitleWindows(title, maxVisual);
+  if (windows.length <= 1 || visualLen(title) <= maxVisual) return windows[0] || '';
+  const events = scheduleChapterTitleWindows(windows, 0, chapterDuration);
+  if (!events.length) return fitChapterTitle(title, maxVisual);
+  const t = Math.min(Math.max(0, localTime), Math.max(chapterDuration - 1e-6, 0));
+  const hit = events.find(event => t >= event[0] && t < event[1]);
+  return hit ? hit[2] : events[events.length - 1][2];
+}
+
+function chapterSlotMaxVisual(label) {
+  const fontPx = parseFloat(getComputedStyle(label).fontSize) || 12;
+  const pad = Math.max(10, fontPx * 0.40);
+  const usable = Math.max(1, label.clientWidth - pad * 2);
+  return usable / Math.max(1, fontPx);
+}
+
 function getVisibleSegments() {
   return segments.filter(s => !deletedIds.has(s._id));
 }
@@ -811,9 +988,12 @@ function setupContentProgress() {
     }
     const label = document.createElement('span');
     label.className = 'content-progress-label';
+    label.dataset.title = chapter.title || `第 ${index + 1} 节`;
+    label.dataset.start = String(chapter.start);
+    label.dataset.end = String(chapter.end);
     label.style.left = `${startPercent}%`;
     label.style.width = `${endPercent - startPercent}%`;
-    label.textContent = chapter.title || `第 ${index + 1} 节`;
+    label.textContent = label.dataset.title;
     contentProgressLabels.appendChild(label);
   });
   updateContentProgress(vid.currentTime || 0);
@@ -824,6 +1004,27 @@ function updateContentProgress(time) {
   if (!contentProgress.classList.contains('visible') || !duration) return;
   const bounded = Math.max(0, Math.min(duration, time || 0));
   contentProgressFill.style.width = `${bounded / duration * 100}%`;
+  contentProgressLabels.querySelectorAll('.content-progress-label').forEach(label => {
+    const title = label.dataset.title || '';
+    const start = Number(label.dataset.start || 0);
+    const end = Number(label.dataset.end || 0);
+    const active = bounded >= start && bounded < end;
+    const maxVisual = chapterSlotMaxVisual(label);
+    const display = chapterTitleAt(title, maxVisual, bounded - start, Math.max(0, end - start), active);
+    const scrolling = active && visualLen(title) > maxVisual + 0.01;
+    label.classList.toggle('is-scrolling', scrolling);
+    if (label.textContent !== display) label.textContent = display;
+  });
+}
+
+let progressLabelRaf = 0;
+function tickProgressLabels() {
+  updateContentProgress(vid.currentTime || 0);
+  if (!vid.paused && !vid.ended) {
+    progressLabelRaf = requestAnimationFrame(tickProgressLabels);
+  } else {
+    progressLabelRaf = 0;
+  }
 }
 
 // ── boot: 读 manifest → 建 tab → 加载默认语言 ───────────────────────────────
@@ -893,6 +1094,7 @@ function setAudio(L) {
 
 vid.addEventListener('play', () => {
   if (vid.muted && dubAudio.src) { dubAudio.currentTime = vid.currentTime; dubAudio.play().catch(() => {}); }
+  if (!progressLabelRaf) progressLabelRaf = requestAnimationFrame(tickProgressLabels);
 });
 vid.addEventListener('pause', () => dubAudio.pause());
 vid.addEventListener('ended', () => dubAudio.pause());

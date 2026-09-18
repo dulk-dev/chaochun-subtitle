@@ -419,7 +419,106 @@ class ChapterTitleFitTests(unittest.TestCase):
         self.assertLess(len(fitted), len(title))
         self.assertLessEqual(BURN_SUBTITLES._visual_len(fitted), 6.01)
 
-    def test_narrow_chapter_slot_ellipsizes_in_ass(self):
+    def test_title_windows_cover_the_full_string_inside_the_slot(self):
+        title = "这是一段非常非常长的核心方法说明标题"
+        windows = BURN_SUBTITLES.chapter_title_windows(title, 6)
+        self.assertGreater(len(windows), 3)
+        self.assertTrue(title.startswith(windows[0]))
+        self.assertTrue(title.endswith(windows[-1]))
+        self.assertIn(windows[0], title)
+        self.assertIn(windows[-1], title)
+        for window in windows:
+            self.assertLessEqual(BURN_SUBTITLES._visual_len(window), 6.01)
+            self.assertNotIn("…", window)
+            self.assertNotIn("\n", window)
+        reconstructed = windows[0]
+        for window in windows[1:]:
+            overlap = 0
+            for size in range(min(len(reconstructed), len(window)), 0, -1):
+                if reconstructed.endswith(window[:size]):
+                    overlap = size
+                    break
+            reconstructed += window[overlap:]
+        self.assertEqual(reconstructed, title)
+
+    def test_schedule_holds_first_and_last_windows(self):
+        windows = ["一二三", "二三四", "三四五", "四五六"]
+        events = BURN_SUBTITLES.schedule_chapter_title_windows(windows, 10.0, 16.0)
+        self.assertEqual(events[0][2], "一二三")
+        self.assertEqual(events[-1][2], "四五六")
+        self.assertAlmostEqual(events[0][0], 10.0)
+        self.assertAlmostEqual(events[-1][1], 16.0)
+        self.assertGreater(events[0][1] - events[0][0], events[1][1] - events[1][0] - 0.05)
+        self.assertGreater(events[-1][1] - events[-1][0], events[1][1] - events[1][0] - 0.05)
+        for start, end, _text in events:
+            self.assertGreaterEqual(end - start, BURN_SUBTITLES._ACTIVE_TITLE_MIN_EVENT - 0.001)
+
+    def test_inactive_chapters_keep_ellipsis_while_active_chapter_ticks(self):
+        long_title = "这是一段非常非常长的核心方法说明标题"
+        chapters = [
+            {"title": "开头", "start": 0.0, "end": 90.0},
+            {"title": long_title, "start": 90.0, "end": 105.0},
+            {"title": "结尾", "start": 105.0, "end": 181.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scheme_b.ass"
+            BURN_SUBTITLES.generate_ass(
+                [{"start": 0.0, "end": 1.0, "text": "测试", "en": "Test"}],
+                path,
+                video_width=1920,
+                video_height=1080,
+                chapters=chapters,
+                duration=181.0,
+                bilingual=True,
+            )
+            content = path.read_text(encoding="utf-8")
+
+        self.assertNotIn("\\move", content)
+        layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, bilingual=True, progress=True)
+        labels = [
+            line
+            for line in content.splitlines()
+            if line.startswith("Dialogue") and "ProgressLabel" in line
+        ]
+        parsed = [self._parse_progress_label(line) for line in labels]
+        self.assertTrue(any(item["text"] == "开头" for item in parsed))
+        self.assertTrue(any(item["text"] == "结尾" for item in parsed))
+
+        slot_px = int(1920 * 15.0 / 181.0)
+        max_visual = BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"])
+        ellipsis = BURN_SUBTITLES.fit_chapter_title(long_title, max_visual)
+
+        inactive = [
+            item for item in parsed
+            if item["text"] == ellipsis
+        ]
+        self.assertTrue(any(self._covers(item, 1.0) for item in inactive))
+        self.assertTrue(any(self._covers(item, 150.0) for item in inactive))
+        self.assertFalse(any(self._covers(item, 97.0) for item in inactive))
+
+        active = [
+            item for item in parsed
+            if self._overlaps(item, 90.0, 105.0) and item["text"] in long_title
+        ]
+        active_texts = [item["text"] for item in active]
+        self.assertGreater(len(set(active_texts)), 1)
+        self.assertTrue(any(long_title.startswith(text) for text in active_texts))
+        self.assertTrue(any(long_title.endswith(text) for text in active_texts))
+        for text in active_texts:
+            self.assertIn(text, long_title)
+            self.assertNotIn("\\N", text)
+            self.assertLessEqual(BURN_SUBTITLES._visual_len(text), max_visual + 0.01)
+        self.assertTrue(any(self._covers(item, 92.0) and item["text"] in long_title for item in active))
+
+        zh_line = next(line for line in content.splitlines() if "CaptionZh" in line and "测试" in line)
+        en_line = next(line for line in content.splitlines() if "CaptionEn" in line and "Test" in line)
+        zh_y = int(zh_line.split("pos(")[1].split(")")[0].split(",")[1])
+        en_y = int(en_line.split("pos(")[1].split(")")[0].split(",")[1])
+        self.assertEqual(zh_y, layout["zh_y"])
+        self.assertEqual(en_y, layout["en_y"])
+        self.assertGreater(zh_y, 1080 + layout["top_pad"])
+
+    def test_narrow_chapter_slot_ellipsizes_when_inactive(self):
         chapters = [
             {"title": "开头", "start": 0.0, "end": 90.0},
             {"title": "这是一段非常非常长的核心方法说明标题", "start": 90.0, "end": 105.0},
@@ -436,20 +535,14 @@ class ChapterTitleFitTests(unittest.TestCase):
                 duration=181.0,
             )
             content = path.read_text(encoding="utf-8")
-        labels = [line for line in content.splitlines() if line.startswith("Dialogue") and "ProgressLabel" in line]
-        self.assertEqual(len(labels), 3)
-        self.assertIn("开头", labels[0])
-        self.assertIn("…", labels[1])
-        self.assertNotIn("这是一段非常非常长的核心方法说明标题", labels[1])
-        self.assertNotIn("\\N", labels[1])
-        self.assertIn("结尾", labels[2])
         layout = BURN_SUBTITLES.letterbox_layout(1920, 1080, progress=True)
         slot_px = int(1920 * 15.0 / 181.0)
         fitted = BURN_SUBTITLES.fit_chapter_title(
             chapters[1]["title"],
             BURN_SUBTITLES.chapter_slot_max_visual(slot_px, layout["progress_font"]),
         )
-        self.assertEqual(fitted, labels[1].rsplit("}", 1)[-1])
+        self.assertIn("…", fitted)
+        self.assertIn(fitted, content)
         self.assertLessEqual(
             BURN_SUBTITLES._visual_len(fitted) * layout["progress_font"],
             slot_px,
@@ -460,6 +553,34 @@ class ChapterTitleFitTests(unittest.TestCase):
             BURN_SUBTITLES.fit_chapter_title("  开场\n说明  ", 12),
             "开场 说明",
         )
+
+    def _parse_progress_label(self, line: str) -> dict:
+        rest = line[len("Dialogue: "):]
+        _layer, start, end, _style, _name, _ml, _mr, _mv, _effect, text = rest.split(",", 9)
+        return {
+            "start": self._ass_time_to_seconds(start),
+            "end": self._ass_time_to_seconds(end),
+            "text": text.rsplit("}", 1)[-1],
+        }
+
+    @staticmethod
+    def _ass_time_to_seconds(value: str) -> float:
+        hours, minutes, rest = value.split(":")
+        seconds, centiseconds = rest.split(".")
+        return (
+            int(hours) * 3600
+            + int(minutes) * 60
+            + int(seconds)
+            + int(centiseconds) / 100
+        )
+
+    @staticmethod
+    def _covers(item: dict, time: float) -> bool:
+        return item["start"] <= time < item["end"]
+
+    @staticmethod
+    def _overlaps(item: dict, start: float, end: float) -> bool:
+        return item["start"] < end and item["end"] > start
 
 
 class BilingualAssTests(unittest.TestCase):

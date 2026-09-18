@@ -55,6 +55,13 @@ _DEFAULT_BRIGHTEN_STRENGTH_PERCENT = 10.0
 _BRIGHTEN_LAYER_BRIGHTNESS = 0.08
 _BRIGHTEN_LAYER_GAMMA = 1.04
 _FACE_SAMPLE_COUNT = 18
+# Scheme B active-chapter title ticker: timed substring windows, no ASS \move.
+_ACTIVE_TITLE_HOLD_START = 0.80
+_ACTIVE_TITLE_HOLD_END = 1.00
+_ACTIVE_TITLE_STEP = 0.30
+_ACTIVE_TITLE_MIN_EVENT = 0.12
+_ACTIVE_TITLE_MAX_EVENTS = 240
+_ACTIVE_TITLE_LOOP_GAP = 0.55
 
 
 def log(msg):
@@ -827,15 +834,35 @@ def load_progress_chapters(
     return chapters
 
 
+def _normalize_chapter_title(title: str) -> str:
+    return re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
+
+
+def _title_prefix_for_width(text: str, max_visual: float) -> str:
+    """Longest prefix of ``text`` whose estimated visual width fits ``max_visual``."""
+    if max_visual <= 0 or not text:
+        return ""
+    cut = 0
+    width = 0.0
+    for index, char in enumerate(text):
+        char_w = _visual_len(char)
+        if width + char_w > max_visual:
+            break
+        width += char_w
+        cut = index + 1
+    return text[:cut] if cut else text[:1]
+
+
 def fit_chapter_title(title: str, max_visual: float) -> str:
     """Keep a chapter label on one line; ellipsize when the slot is too narrow.
 
-    Scrolling/marquee of the full title is not burned in. libass has no stable
-    loop primitive, glyph widths are estimated, and chapter durations vary, so
-    ``\\move`` + ``\\clip`` would be fragile across players. Ellipsis is the
-    deterministic fallback.
+    Inactive (and not-yet/already-passed) chapters always use this ellipsis.
+    The in-progress chapter may instead cycle substring windows so the full
+    topic can be read without ASS ``\\move`` (see ``chapter_title_windows``).
+    ``\\move`` + ``\\clip`` loops are still avoided: libass has no stable loop
+    primitive, glyph widths are estimated, and chapter durations vary.
     """
-    title = re.sub(r"\s+", " ", str(title or "")).replace("\n", " ").strip()
+    title = _normalize_chapter_title(title)
     if max_visual <= 0:
         return ""
     if _visual_len(title) <= max_visual:
@@ -845,17 +872,197 @@ def fit_chapter_title(title: str, max_visual: float) -> str:
     if max_visual <= ellipsis_w:
         return ellipsis
     budget = max_visual - ellipsis_w
-    cut = 0
-    width = 0.0
-    for index, char in enumerate(title):
-        char_w = _visual_len(char)
-        if width + char_w > budget:
-            break
-        width += char_w
-        cut = index + 1
-    if cut <= 0:
+    prefix = _title_prefix_for_width(title, budget).rstrip()
+    if not prefix:
         return ellipsis
-    return title[:cut].rstrip() + ellipsis
+    return prefix + ellipsis
+
+
+def chapter_title_windows(title: str, max_visual: float) -> list[str]:
+    """Substring windows that each fit in the slot, covering the full title.
+
+    One-character (or one-grapheme-unit) steps from the start until the
+    remaining suffix fits. Consecutive duplicates are dropped. This is the
+    Scheme B ticker: no pixel motion tags, only successive Dialogue texts.
+    """
+    title = _normalize_chapter_title(title)
+    if max_visual <= 0:
+        return [""]
+    if not title or _visual_len(title) <= max_visual:
+        return [title]
+    windows: list[str] = []
+    start = 0
+    while start < len(title):
+        remaining = title[start:]
+        if _visual_len(remaining) <= max_visual:
+            if not windows or windows[-1] != remaining:
+                windows.append(remaining)
+            break
+        window = _title_prefix_for_width(remaining, max_visual)
+        if not window:
+            break
+        if not windows or windows[-1] != window:
+            windows.append(window)
+        start += 1
+    return windows or [fit_chapter_title(title, max_visual)]
+
+
+def _subsample_title_windows(windows: list[str], count: int) -> list[str]:
+    """Keep first and last windows; pick evenly spaced steps in between."""
+    if not windows:
+        return []
+    if count <= 1:
+        return [windows[0]]
+    if count >= len(windows):
+        return list(windows)
+    last = count - 1
+    indices = [round(index * (len(windows) - 1) / last) for index in range(count)]
+    picked: list[str] = []
+    for index in indices:
+        text = windows[index]
+        if not picked or picked[-1] != text:
+            picked.append(text)
+    if picked[0] != windows[0]:
+        picked[0] = windows[0]
+    if picked[-1] != windows[-1]:
+        picked[-1] = windows[-1]
+    return picked
+
+
+def _title_window_durations(count: int, budget: float) -> list[float]:
+    """Hold the first/last windows slightly longer, then fill the span."""
+    if count <= 1:
+        return [max(budget, 0.0)]
+    hold_start = min(_ACTIVE_TITLE_HOLD_START, budget * 0.16)
+    hold_end = min(_ACTIVE_TITLE_HOLD_END, budget * 0.20)
+    rest = budget - hold_start - hold_end
+    if rest < count * _ACTIVE_TITLE_MIN_EVENT:
+        hold_start = hold_end = 0.0
+        rest = budget
+    step = rest / count
+    durations = [step] * count
+    durations[0] += hold_start
+    durations[-1] += hold_end
+    total = sum(durations)
+    if total <= 0:
+        return [budget / count] * count
+    scale = budget / total
+    return [duration * scale for duration in durations]
+
+
+def schedule_chapter_title_windows(
+    windows: list[str], start: float, end: float
+) -> list[tuple[float, float, str]]:
+    """Map substring windows onto ``[start, end)`` as non-overlapping events.
+
+    Short chapters subsample windows so each event stays on screen at least
+    ``_ACTIVE_TITLE_MIN_EVENT`` seconds. Long chapters repeat the pass so the
+    topic stays readable instead of freezing on the last slice.
+    """
+    duration = max(0.0, float(end) - float(start))
+    if not windows or duration <= 0:
+        return []
+    max_by_time = max(1, int(duration / _ACTIVE_TITLE_MIN_EVENT))
+    shown = _subsample_title_windows(
+        windows, min(len(windows), max_by_time, _ACTIVE_TITLE_MAX_EVENTS)
+    )
+    if len(shown) == 1:
+        return [(float(start), float(end), shown[0])]
+
+    hold_start = min(_ACTIVE_TITLE_HOLD_START, duration * 0.16)
+    hold_end = min(_ACTIVE_TITLE_HOLD_END, duration * 0.20)
+    pass_len = max(
+        len(shown) * _ACTIVE_TITLE_MIN_EVENT,
+        hold_start + len(shown) * _ACTIVE_TITLE_STEP + hold_end,
+    )
+
+    def events_for_span(
+        span_start: float, span_end: float
+    ) -> list[tuple[float, float, str]]:
+        budget = span_end - span_start
+        durations = _title_window_durations(len(shown), budget)
+        events: list[tuple[float, float, str]] = []
+        cursor = span_start
+        for text, slot in zip(shown, durations):
+            cursor_end = cursor + slot
+            if seconds_to_ass_time(cursor) == seconds_to_ass_time(min(cursor_end, span_end)):
+                cursor = cursor_end
+                continue
+            events.append((cursor, min(cursor_end, span_end), text))
+            cursor = cursor_end
+        if events:
+            last_start, _, last_text = events[-1]
+            events[-1] = (last_start, span_end, last_text)
+        elif shown:
+            events.append((span_start, span_end, shown[0]))
+        return events
+
+    start = float(start)
+    end = float(end)
+    if duration < pass_len * 1.75:
+        return events_for_span(start, end)
+
+    events: list[tuple[float, float, str]] = []
+    cursor = start
+    while cursor < end - 0.001:
+        remaining = end - cursor
+        if events and remaining < pass_len * 0.45:
+            events.append((cursor, end, shown[-1]))
+            break
+        span_end = cursor + min(pass_len, remaining)
+        events.extend(events_for_span(cursor, span_end))
+        cursor = span_end
+        if cursor >= end:
+            break
+        gap_end = min(cursor + _ACTIVE_TITLE_LOOP_GAP, end)
+        if gap_end > cursor:
+            events.append((cursor, gap_end, shown[-1]))
+            cursor = gap_end
+    if events:
+        last_start, _, last_text = events[-1]
+        events[-1] = (last_start, end, last_text)
+    return events
+
+
+def chapter_title_at(
+    title: str,
+    max_visual: float,
+    local_time: float,
+    chapter_duration: float,
+    *,
+    active: bool = True,
+) -> str:
+    """Visible chapter label at a time within the chapter (Scheme B)."""
+    title = _normalize_chapter_title(title)
+    if not active or chapter_duration <= 0:
+        return fit_chapter_title(title, max_visual)
+    windows = chapter_title_windows(title, max_visual)
+    if len(windows) <= 1 or _visual_len(title) <= max_visual:
+        return windows[0] if windows else ""
+    events = _merge_adjacent_title_events(
+        schedule_chapter_title_windows(windows, 0.0, chapter_duration)
+    )
+    if not events:
+        return fit_chapter_title(title, max_visual)
+    t = min(max(0.0, local_time), max(chapter_duration - 1e-6, 0.0))
+    for start, end, text in events:
+        if start <= t < end:
+            return text
+    return events[-1][2]
+
+
+def _merge_adjacent_title_events(
+    events: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    merged: list[tuple[float, float, str]] = []
+    for start, end, text in events:
+        if end <= start:
+            continue
+        if merged and merged[-1][2] == text and abs(merged[-1][1] - start) <= 0.02:
+            merged[-1] = (merged[-1][0], end, text)
+        else:
+            merged.append((start, end, text))
+    return merged
 
 
 def chapter_slot_max_visual(slot_width_px: int, font_size: int) -> float:
@@ -908,18 +1115,39 @@ def _progress_events(
         end_x = int(video_width * float(chapter["end"]) / duration)
         slot_width = max(1, end_x - start_x)
         center_x = (start_x + end_x) // 2
-        label = fit_chapter_title(
-            str(chapter["title"]),
-            chapter_slot_max_visual(slot_width, font_size),
-        )
+        max_visual = chapter_slot_max_visual(slot_width, font_size)
+        title = _normalize_chapter_title(str(chapter["title"]))
+        ellipsis = fit_chapter_title(title, max_visual)
         clip_left = start_x + max(2, int(font_size * 0.12))
         clip_right = max(clip_left + 1, end_x - max(2, int(font_size * 0.12)))
-        events.append(
-            f"Dialogue: 3,{seconds_to_ass_time(0)},{seconds_to_ass_time(duration)},"
-            f"ProgressLabel,,0,0,0,,"
-            f"{{\\an5\\q2\\clip({clip_left},0,{clip_right},{layout['top_pad']})\\pos({center_x},{label_y})}}"
-            f"{_ass_escape(label)}"
+        clip_bottom = layout["top_pad"]
+
+        def emit_label(start: float, end: float, text: str) -> None:
+            if end <= start:
+                return
+            if seconds_to_ass_time(start) == seconds_to_ass_time(end):
+                return
+            events.append(
+                f"Dialogue: 3,{seconds_to_ass_time(start)},{seconds_to_ass_time(end)},"
+                f"ProgressLabel,,0,0,0,,"
+                f"{{\\an5\\q2\\clip({clip_left},0,{clip_right},{clip_bottom})"
+                f"\\pos({center_x},{label_y})}}"
+                f"{_ass_escape(text)}"
+            )
+
+        windows = chapter_title_windows(title, max_visual)
+        chapter_start = max(0.0, float(chapter["start"]))
+        chapter_end = min(duration, float(chapter["end"]))
+        if len(windows) <= 1 or _visual_len(title) <= max_visual:
+            emit_label(0.0, duration, windows[0] if windows else ellipsis)
+            continue
+        emit_label(0.0, chapter_start, ellipsis)
+        active = _merge_adjacent_title_events(
+            schedule_chapter_title_windows(windows, chapter_start, chapter_end)
         )
+        for event_start, event_end, text in active:
+            emit_label(event_start, event_end, text)
+        emit_label(chapter_end, duration, ellipsis)
     return events, layout["top_pad"], font_size
 
 
