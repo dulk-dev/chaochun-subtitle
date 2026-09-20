@@ -130,6 +130,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --lb-top-frac: 0.04603;
     --lb-bottom-frac: 0.09683;
     --lb-scale: 1;
+    --lb-canvas-h: 1260;
     --lb-zh-font: 66;
     --lb-en-font: 32;
     --lb-progress-font: 43;
@@ -172,8 +173,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     justify-content: flex-start;
     flex-direction: column;
     text-align: center;
-    padding-top: calc(var(--lb-stack-inset-frac) * 100%);
-    gap: calc(var(--lb-stack-gap-frac) * 100%);
+    /* inset/gap fracs are relative to the bottom-bar HEIGHT; CSS % padding/gap
+       would resolve against the container WIDTH, so derive px from canvas height. */
+    padding-top: calc(var(--lb-stack-inset-frac) * var(--lb-bottom-frac) * var(--lb-canvas-h) * var(--lb-scale) * 1px);
+    gap: calc(var(--lb-stack-gap-frac) * var(--lb-bottom-frac) * var(--lb-canvas-h) * var(--lb-scale) * 1px);
     font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
     font-size: calc(var(--lb-zh-font) * var(--lb-scale) * 1px);
     line-height: 1.05;
@@ -788,6 +791,7 @@ function applyLetterboxLayout(layout) {
   videoStage.style.setProperty('--lb-zh-font', String(layout.zh_font));
   videoStage.style.setProperty('--lb-en-font', String(layout.en_font || 0));
   videoStage.style.setProperty('--lb-progress-font', String(layout.progress_font));
+  videoStage.style.setProperty('--lb-canvas-h', String(ch));
   videoStage.style.setProperty('--lb-stack-inset-frac', String(layout.stack_top_inset_bar_frac || 0));
   videoStage.style.setProperty('--lb-stack-gap-frac', String(layout.stack_gap_bar_frac || 0));
 }
