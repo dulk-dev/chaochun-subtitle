@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
-  <title id="title">oil-subtitle 本地视频中文字幕工作流</title>
-  <desc id="desc">从音频波形和转录文本，到人工校对、章节进度条以及 SRT、ASS、MP4 成片的完整流程。</desc>
+  <title id="title">chaochun-subtitle 本地视频 letterbox 中英字幕工作流</title>
+  <desc id="desc">从音频波形和转录文本，到人工校对、上下黑边章节进度以及中英同屏 SRT、ASS、MP4 成片的完整流程。</desc>
 
   <defs>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
@@ -15,11 +15,11 @@
   <rect width="1200" height="400" rx="30" fill="#12111B"/>
   <path d="M0 332H1200" stroke="#2A2838"/>
 
-  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
-    <text x="56" y="63" fill="#A7A3BD" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">CREATOR VIDEO TOOL / SDK ONLY</text>
-    <text x="52" y="138" fill="#F8F7FC" font-size="58" font-weight="760" letter-spacing="-2">oil-subtitle</text>
-    <text x="56" y="188" fill="#D7D4E3" font-size="27" font-weight="560">让本地视频拥有准确、可校对的</text>
-    <text x="56" y="226" fill="#D7D4E3" font-size="27" font-weight="560">中文字幕和清晰的章节进度</text>
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif">
+    <text x="56" y="63" fill="#A7A3BD" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">CREATOR VIDEO TOOL / SKILL</text>
+    <text x="52" y="128" fill="#F8F7FC" font-size="42" font-weight="760" letter-spacing="-1.5">chaochun-subtitle</text>
+    <text x="56" y="178" fill="#D7D4E3" font-size="24" font-weight="560">上下黑边 letterbox，章节进度在上</text>
+    <text x="56" y="214" fill="#D7D4E3" font-size="24" font-weight="560">中英白字同屏，先校对再烧录</text>
 
     <g transform="translate(56 281)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" font-weight="650">
       <circle cx="5" cy="-5" r="5" fill="#7C74FF"/>
@@ -31,7 +31,7 @@
     </g>
   </g>
 
-  <g id="subtitle-editor" clip-path="url(#panel-clip)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+  <g id="subtitle-editor" clip-path="url(#panel-clip)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif">
     <rect x="626" y="42" width="526" height="294" rx="20" fill="#F7F6FC"/>
     <rect x="626" y="42" width="526" height="48" fill="#FFFFFF"/>
     <circle cx="650" cy="66" r="6" fill="#FF6B6B"/>
@@ -43,7 +43,16 @@
     <rect x="980" y="90" width="172" height="246" fill="#FFFFFF"/>
     <path d="M980 90V336" stroke="#E9E6F3"/>
 
-    <g id="waveform" transform="translate(658 122)" fill="#7C74FF">
+    <!-- Top letterbox: chapter directory + translucent progress -->
+    <rect x="626" y="90" width="354" height="36" fill="#000000"/>
+    <rect x="626" y="90" width="196" height="36" fill="#D8D5E4" fill-opacity=".28"/>
+    <path d="M744 96V120M862 96V120" stroke="#FFFFFF" stroke-opacity=".22"/>
+    <text x="685" y="113" fill="#F4F2FA" font-size="13" text-anchor="middle">开头</text>
+    <text x="803" y="113" fill="#F4F2FA" font-size="13" text-anchor="middle">方法</text>
+    <text x="921" y="113" fill="#AAA6BA" font-size="13" text-anchor="middle">结尾</text>
+
+    <!-- Picture area between letterbox bars -->
+    <g id="waveform" transform="translate(658 148)" fill="#7C74FF">
       <rect x="0" y="23" width="7" height="18" rx="3.5" opacity=".55"/>
       <rect x="17" y="14" width="7" height="36" rx="3.5" opacity=".70"/>
       <rect x="34" y="4" width="7" height="56" rx="3.5"/>
@@ -62,20 +71,13 @@
       <rect x="255" y="23" width="7" height="18" rx="3.5" opacity=".55"/>
     </g>
 
-    <rect x="673" y="213" width="260" height="52" rx="8" fill="#1C1B24" fill-opacity=".92"/>
-    <text x="803" y="246" fill="#FFFFFF" font-size="21" font-weight="650" text-anchor="middle">字幕先校对，再一次烧录</text>
-
-    <g id="chapter-progress">
-      <rect x="626" y="304" width="354" height="32" fill="#282733"/>
-      <rect x="626" y="304" width="218" height="4" fill="url(#accent)"/>
-      <path d="M744 304V336M862 304V336" stroke="#FFFFFF" stroke-opacity=".18"/>
-      <text x="684" y="328" fill="#EAE8F2" font-size="18" text-anchor="middle">转录</text>
-      <text x="803" y="328" fill="#EAE8F2" font-size="18" text-anchor="middle">校对</text>
-      <text x="921" y="328" fill="#AAA6BA" font-size="18" text-anchor="middle">成片</text>
-    </g>
+    <!-- Bottom letterbox: stacked Chinese + English captions -->
+    <rect x="626" y="268" width="354" height="68" fill="#000000"/>
+    <text x="803" y="296" fill="#FFFFFF" font-size="16" font-weight="700" text-anchor="middle">字幕先校对，再一次烧录</text>
+    <text x="803" y="318" fill="#E7E4F2" font-size="12" font-weight="500" text-anchor="middle">Review first, then burn in</text>
 
     <g id="subtitle-list">
-      <text x="1000" y="122" fill="#8B89A6" font-size="18" font-weight="650">中文字幕</text>
+      <text x="1000" y="122" fill="#8B89A6" font-size="16" font-weight="650">中英字幕</text>
       <rect x="994" y="139" width="144" height="48" rx="10" fill="#F7F6FC"/>
       <rect x="1007" y="151" width="104" height="7" rx="3.5" fill="#C9C5D6"/>
       <rect x="1007" y="166" width="72" height="6" rx="3" fill="#E0DDEA"/>
