@@ -4,3 +4,25 @@ __pycache__/
 *.pyo
 .vocabulary-cache.json
 glossary.json
+
+# Local env / secrets (API key is stored via configure_api_key.py, not dotenv)
+.env
+.env.*
+!.env.example
+dashscope_api_key
+*.pem
+
+# User config lives in ~/.config/chaochun-subtitle/; do not commit copies
+config.json
+hotwords.json
+
+# Generated subtitle/video artifacts (do not ignore assets/readme)
+*.subtitle-work/
+*_subtitled.mp4
+*_subtitled.srt
+*_subtitled.ass
+*_subtitled_en.srt
+*.srt
+*.ass
+
+.DS_Store
