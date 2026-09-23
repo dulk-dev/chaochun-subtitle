@@ -695,6 +695,7 @@ function openFindBar() {
 function closeFindBar() {
   findBarEl.classList.remove('show');
   currentNeedle = '';
+  findInput.value = '';
   findIndex = -1;
   render();
   updateInfo();

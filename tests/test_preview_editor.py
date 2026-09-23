@@ -170,6 +170,7 @@ class TimelineSearchFilterTests(unittest.TestCase):
 
         closer = html.split("function closeFindBar()", 1)[1].split("document.addEventListener('keydown'", 1)[0]
         self.assertIn("currentNeedle = '';", closer)
+        self.assertIn("findInput.value = '';", closer)
         self.assertIn("updateInfo();", closer)
 
 
