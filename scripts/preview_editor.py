@@ -336,6 +336,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .subtitle-list { flex: 1; overflow-y: auto; padding: 6px; }
   .subtitle-list::-webkit-scrollbar { width: 6px; }
   .subtitle-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .list-empty {
+    margin: 18px 8px;
+    padding: 16px 12px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.5;
+  }
 
   /* ---- subtitle item ---- */
   .sub-item {
@@ -618,7 +628,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <!-- find bar: hidden by default, Ctrl+F to show -->
     <div class="find-bar" id="findBar">
-      <label>查找</label><input id="findInput" placeholder="大小写不敏感…">
+      <label>查找</label><input id="findInput" placeholder="实时筛选时间轴段落…">
       <label>替换</label><input id="replaceInput" placeholder="新文本…">
       <button class="btn" id="btnReplaceOne">替换下一个</button>
       <button class="btn" id="btnReplaceAll">全部替换</button>
@@ -685,7 +695,10 @@ function openFindBar() {
 function closeFindBar() {
   findBarEl.classList.remove('show');
   currentNeedle = '';
+  findInput.value = '';
+  findIndex = -1;
   render();
+  updateInfo();
 }
 
 document.addEventListener('keydown', e => {
@@ -734,6 +747,15 @@ function segmentFields() {
 
 function segmentSearchText(seg) {
   return segmentFields().map(field => seg[field] || '').join('\n');
+}
+
+function searchNeedle() {
+  return (currentNeedle || '').trim();
+}
+
+function segmentMatchesNeedle(seg, needle = searchNeedle()) {
+  if (!needle) return true;
+  return new RegExp(escapeRe(needle), 'i').test(segmentSearchText(seg));
 }
 
 function segmentZh(seg) {
@@ -1007,8 +1029,19 @@ function render() {
   listEl.innerHTML = '';
   const vis = getVisibleSegments();
   selAll.checked = vis.length > 0 && vis.every(s => !deletedIds.has(s._id));
+  const needle = searchNeedle();
+  const rows = needle ? segments.filter(seg => segmentMatchesNeedle(seg, needle)) : segments;
+  listEl.dataset.filtering = needle ? '1' : '0';
+  listEl.dataset.matchCount = String(rows.length);
 
-  segments.forEach(seg => {
+  if (needle && rows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'list-empty';
+    empty.textContent = '没有匹配的时间轴段落';
+    listEl.appendChild(empty);
+  }
+
+  rows.forEach(seg => {
     const id = seg._id || (seg._id = Math.random().toString(36).slice(2));
     const isDel = deletedIds.has(id);
     const isEdit = editMode === id;
@@ -1039,7 +1072,7 @@ function render() {
       textEl.dataset.field = field;
       textEl.contentEditable = 'false';
       const fieldText = seg[field] || (field === 'zh' ? seg.text : '') || '';
-      if (currentNeedle) textEl.innerHTML = insertMarks(fieldText, currentNeedle);
+      if (needle) textEl.innerHTML = insertMarks(fieldText, needle);
       else textEl.textContent = fieldText;
       textEl.addEventListener('mousedown', e => {
         if (textEl.contentEditable === 'true') e.stopPropagation();
@@ -1052,7 +1085,7 @@ function render() {
         if (textEl.contentEditable === 'true') {
           finishEdit(id, field, textEl.innerText.trim());
           textEl.contentEditable = 'false';
-          if (currentNeedle) textEl.innerHTML = insertMarks(seg[field] || '', currentNeedle);
+          if (searchNeedle()) textEl.innerHTML = insertMarks(seg[field] || '', searchNeedle());
           else textEl.textContent = seg[field] || '';
         }
       });
@@ -1143,7 +1176,11 @@ function toggleDelete(id) {
 function updateInfo() {
   const total = segments.length;
   const vis   = getVisibleSegments().length;
-  listInfo.textContent = `共 ${total} 条 | 显示 ${vis} | 已删除 ${total - vis}`;
+  const needle = searchNeedle();
+  const matched = needle ? segments.filter(seg => segmentMatchesNeedle(seg, needle)).length : vis;
+  listInfo.textContent = needle
+    ? `共 ${total} 条 | 筛选 ${matched} | 已删除 ${total - vis}`
+    : `共 ${total} 条 | 显示 ${vis} | 已删除 ${total - vis}`;
 }
 
 // ── localStorage ────────────────────────────────────────────────────────────
@@ -1158,7 +1195,9 @@ function saveLS() {
 // Update highlights on every keystroke in find input
 findInput.addEventListener('input', () => {
   currentNeedle = findInput.value;
+  findIndex = -1;
   render();
+  updateInfo();
 });
 
 function doFind(replaceVal, replaceOne) {

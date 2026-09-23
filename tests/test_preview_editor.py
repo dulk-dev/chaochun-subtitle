@@ -145,6 +145,35 @@ class LetterboxApiTests(unittest.TestCase):
         self.assertGreater(payload["bottom_frac"], payload["top_frac"])
 
 
+class TimelineSearchFilterTests(unittest.TestCase):
+    def test_find_input_filters_timeline_rows_live(self):
+        html = PREVIEW_EDITOR.HTML_TEMPLATE
+        self.assertIn('placeholder="实时筛选时间轴段落…"', html)
+        self.assertIn("function searchNeedle()", html)
+        self.assertIn("function segmentMatchesNeedle(", html)
+        self.assertIn("没有匹配的时间轴段落", html)
+        self.assertIn(".list-empty", html)
+
+        render = html.split("function render()", 1)[1].split("function startEdit(", 1)[0]
+        self.assertIn("segments.filter(seg => segmentMatchesNeedle(seg, needle))", render)
+        self.assertIn("rows.forEach(seg =>", render)
+        self.assertNotIn("segments.forEach(seg =>", render)
+        self.assertIn("listEl.dataset.filtering", render)
+        self.assertIn("listEl.dataset.matchCount", render)
+
+        info = html.split("function updateInfo()", 1)[1].split("function saveLS(", 1)[0]
+        self.assertIn("筛选 ${matched}", info)
+
+        finder = html.split("findInput.addEventListener('input'", 1)[1].split("function doFind(", 1)[0]
+        self.assertIn("render();", finder)
+        self.assertIn("updateInfo();", finder)
+
+        closer = html.split("function closeFindBar()", 1)[1].split("document.addEventListener('keydown'", 1)[0]
+        self.assertIn("currentNeedle = '';", closer)
+        self.assertIn("findInput.value = '';", closer)
+        self.assertIn("updateInfo();", closer)
+
+
 class ManualGlossaryHookTests(unittest.TestCase):
     def test_saving_source_subtitles_records_pending_agent_review(self):
         with tempfile.TemporaryDirectory() as tmp:
