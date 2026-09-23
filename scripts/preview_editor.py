@@ -1179,7 +1179,7 @@ function updateInfo() {
   const needle = searchNeedle();
   const matched = needle ? segments.filter(seg => segmentMatchesNeedle(seg, needle)).length : vis;
   listInfo.textContent = needle
-    ? `共 ${total} 条 | 筛选 ${matched} | 显示 ${vis} | 已删除 ${total - vis}`
+    ? `共 ${total} 条 | 筛选 ${matched} | 已删除 ${total - vis}`
     : `共 ${total} 条 | 显示 ${vis} | 已删除 ${total - vis}`;
 }
 
