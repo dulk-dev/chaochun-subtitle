@@ -984,15 +984,32 @@ vid.addEventListener('ratechange', () => { dubAudio.playbackRate = vid.playbackR
 init();
 
 // ── video sync ─────────────────────────────────────────────────────────────
+// 交界点属于后一段。长句被切成首尾相接的两段时，点击后一段会把时间设到它的
+// start，这个时刻如果仍算进前一段（闭区间），高亮和左侧字幕就会弹回去。
+// 多段同时盖住同一时刻时，取 start 更晚的那条，重叠的后一段才能被点中。
+function activeSegmentAt(t) {
+  let active = null;
+  let activeOpen = false;
+  for (const s of segments) {
+    if (deletedIds.has(s._id)) continue;
+    const start = Number(s.start);
+    const end = Number(s.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const open = t >= start && t < end;
+    const exactEnd = !open && t === end && end >= start;
+    if (!open && !exactEnd) continue;
+    if (!active || (open && !activeOpen) || (open === activeOpen && start > Number(active.start))) {
+      active = s;
+      activeOpen = open;
+    }
+  }
+  return active;
+}
+
 // 按当前视频时间刷新底部字幕浮层 + 列表高亮(切 tab / 跳转时也能立即生效,不必等播放)
 function syncCurSub(doScroll) {
   const t = vid.currentTime;
-  let active = null;
-  for (const s of segments) {
-    if (!deletedIds.has(s._id) && t >= s.start && t <= s.end) {
-      active = s; break;
-    }
-  }
+  const active = activeSegmentAt(t);
   if (active) {
     renderCurrentSubtitle(active);
   } else {
@@ -1126,9 +1143,9 @@ function render() {
         .some(el => el.contentEditable === 'true');
       if (editing) return;
       vid.currentTime = seg.start;
-      // Immediately show this subtitle without waiting for timeupdate
-      renderCurrentSubtitle(seg);
       updateContentProgress(seg.start);
+      // 立刻按交界规则刷新高亮和字幕，不等 timeupdate 再用前一段把结果盖掉
+      syncCurSub(false);
     });
 
     item.appendChild(check);
