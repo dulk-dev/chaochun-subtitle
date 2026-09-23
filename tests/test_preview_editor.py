@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -185,6 +186,76 @@ class ManualGlossaryHookTests(unittest.TestCase):
         self.assertEqual(review["pending_count"], 1)
         self.assertEqual(review["learned_count"], 0)
         learn.assert_called_once()
+
+
+def _extract_function(source: str, name: str) -> str:
+    start = source.index(f"function {name}")
+    opening = source.index("{", start)
+    depth = 0
+    for index, char in enumerate(source[opening:], opening):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unclosed function {name}")
+
+
+class ActiveSegmentTests(unittest.TestCase):
+    def test_shared_boundary_belongs_to_the_later_segment(self):
+        html = PREVIEW_EDITOR.HTML_TEMPLATE
+        self.assertNotIn("t >= s.start && t <= s.end", html)
+        self.assertIn("syncCurSub(false)", html)
+        function = _extract_function(html, "activeSegmentAt")
+        script = """
+        const deletedIds = new Set(["gone"]);
+        const segments = [
+          { _id: "a", start: 4, end: 8, text: "first" },
+          { _id: "b", start: 8, end: 12, text: "second" },
+          { _id: "c", start: 13, end: 18, text: "overlap-first" },
+          { _id: "d", start: 15.5, end: 20, text: "overlap-second" },
+          { _id: "gone", start: 8, end: 12, text: "deleted" },
+          { _id: "e", start: 20.6, end: 21.4, text: "gap-first" },
+          { _id: "f", start: 21.8, end: 23.4, text: "gap-second" },
+        ];
+        """ + function + """
+        const pick = (t) => {
+          const hit = activeSegmentAt(t);
+          return hit ? hit.text : null;
+        };
+        console.log(JSON.stringify({
+          beforeBoundary: pick(7.9),
+          boundary: pick(8),
+          insideSecond: pick(8.1),
+          overlapEarly: pick(14),
+          overlap: pick(15.5),
+          gap: pick(21.5),
+          gapSecond: pick(21.8),
+          exactEnd: pick(23.4),
+          afterAll: pick(23.5),
+        }));
+        """
+        result = subprocess.run(
+            ["node", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "beforeBoundary": "first",
+                "boundary": "second",
+                "insideSecond": "second",
+                "overlapEarly": "overlap-first",
+                "overlap": "overlap-second",
+                "gap": None,
+                "gapSecond": "gap-second",
+                "exactEnd": "gap-second",
+                "afterAll": None,
+            },
+        )
 
 
 if __name__ == "__main__":
