@@ -5,6 +5,11 @@ description: >
   并默认烧录上下黑边 letterbox、上方章节进度条、下方中英白字同屏的成片。
   用户只要提供成片视频并要求加字幕、修字幕、生成 SRT/ASS、字幕进度条、
   英文字幕或双语烧录，就使用本 Skill。不要用它修改 .screenstudio 工程时间线。
+metadata:
+  author: chaochun
+  version: "1.0"
+  source: https://github.com/dulk-dev/chaochun-subtitle
+  notes: 改写自 oil-subtitle，默认使用 letterbox 双语布局，适配中文视频字幕审校与烧录流程。
 ---
 
 # Chaochun Subtitle
