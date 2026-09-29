@@ -9,6 +9,9 @@ Lookup order for config files (API key, config.json, glossary.json):
 3. Legacy ``OIL_SUBTITLE_*`` / ``SCREEN_STUDIO_EDITOR_*`` env
 4. Legacy ``~/.config/oil-subtitle/`` (then screen-studio-editor for config.json)
 5. Legacy ``~/.bailian/config.json`` for API key only
+
+The banned-term lexicon is separate from glossary. It is optional display
+wording and is not read from the oil-subtitle fallback.
 """
 
 from __future__ import annotations
@@ -24,6 +27,9 @@ PREFERRED_API_KEY_FILE = (
     Path.home() / ".config" / "chaochun-subtitle" / "dashscope_api_key"
 )
 PREFERRED_GLOSSARY = Path.home() / ".config" / "chaochun-subtitle" / "glossary.json"
+PREFERRED_BANNED_TERMS = (
+    Path.home() / ".config" / "chaochun-subtitle" / "banned_terms.json"
+)
 LEGACY_OIL_CONFIG = Path.home() / ".config" / "oil-subtitle" / "config.json"
 LEGACY_OIL_API_KEY_FILE = (
     Path.home() / ".config" / "oil-subtitle" / "dashscope_api_key"
@@ -169,6 +175,31 @@ def resolve_glossary_path(override: str | Path | None = None) -> Path:
         legacy_paths=(LEGACY_OIL_GLOSSARY,),
         env_suffix="GLOSSARY",
     )
+
+
+def resolve_banned_terms_path(
+    override: str | Path | None = None,
+    *,
+    shipped: Path | None = None,
+) -> Path:
+    """Resolve the optional display lexicon without using the glossary file.
+
+    Explicit overrides and config win. When the user has not chosen a file,
+    an existing personal lexicon wins over the shipped seed list.
+    """
+    if override:
+        return Path(override).expanduser()
+    configured = env_value("CHAOCHUN_SUBTITLE_BANNED_TERMS")
+    if configured:
+        return Path(configured).expanduser()
+    from_config = str(load_user_config().get("banned_terms") or "").strip()
+    if from_config:
+        return Path(from_config).expanduser()
+    if PREFERRED_BANNED_TERMS.exists():
+        return PREFERRED_BANNED_TERMS
+    if shipped is not None:
+        return shipped
+    return PREFERRED_BANNED_TERMS
 
 
 def dashscope_api_key_file() -> Path:

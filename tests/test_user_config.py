@@ -19,6 +19,7 @@ CONFIG_ENV_KEYS = (
     "CHAOCHUN_SUBTITLE_CONFIG",
     "CHAOCHUN_SUBTITLE_API_KEY_FILE",
     "CHAOCHUN_SUBTITLE_GLOSSARY",
+    "CHAOCHUN_SUBTITLE_BANNED_TERMS",
     "CHAOCHUN_SUBTITLE_PROGRESS_ENABLED",
     "CHAOCHUN_SUBTITLE_PROGRESS_MIN_DURATION",
     "OIL_SUBTITLE_CONFIG",
@@ -54,6 +55,7 @@ class UserConfigResolutionTests(unittest.TestCase):
             "preferred_config": chaochun / "config.json",
             "preferred_key": chaochun / "dashscope_api_key",
             "preferred_glossary": chaochun / "glossary.json",
+            "preferred_banned_terms": chaochun / "banned_terms.json",
             "oil_config": oil / "config.json",
             "oil_key": oil / "dashscope_api_key",
             "oil_glossary": oil / "glossary.json",
@@ -70,6 +72,11 @@ class UserConfigResolutionTests(unittest.TestCase):
         )
         stack.enter_context(
             patch.object(USER_CONFIG, "PREFERRED_GLOSSARY", paths["preferred_glossary"])
+        )
+        stack.enter_context(
+            patch.object(
+                USER_CONFIG, "PREFERRED_BANNED_TERMS", paths["preferred_banned_terms"]
+            )
         )
         stack.enter_context(
             patch.object(USER_CONFIG, "LEGACY_OIL_CONFIG", paths["oil_config"])
@@ -172,6 +179,44 @@ class UserConfigResolutionTests(unittest.TestCase):
             with self._patched(paths):
                 self.assertEqual(
                     USER_CONFIG.resolve_glossary_path(), paths["oil_glossary"]
+                )
+
+    def test_banned_terms_path_is_separate_from_glossary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._bind_paths(root)
+            paths["chaochun"].mkdir()
+            paths["preferred_glossary"].write_text("[]", encoding="utf-8")
+            shipped = root / "shipped.json"
+            custom = root / "custom-banned.json"
+            with self._patched(paths):
+                self.assertEqual(
+                    USER_CONFIG.resolve_banned_terms_path(shipped=shipped), shipped
+                )
+            paths["preferred_banned_terms"].write_text("{}\n", encoding="utf-8")
+            with self._patched(paths):
+                self.assertEqual(
+                    USER_CONFIG.resolve_banned_terms_path(shipped=shipped),
+                    paths["preferred_banned_terms"],
+                )
+            paths["preferred_config"].write_text(
+                json.dumps({"banned_terms": str(custom)}), encoding="utf-8"
+            )
+            with self._patched(paths):
+                self.assertEqual(
+                    USER_CONFIG.resolve_banned_terms_path(shipped=shipped), custom
+                )
+            with self._patched(paths, CHAOCHUN_SUBTITLE_BANNED_TERMS=str(root / "env.json")):
+                self.assertEqual(
+                    USER_CONFIG.resolve_banned_terms_path(shipped=shipped),
+                    root / "env.json",
+                )
+            with self._patched(paths, CHAOCHUN_SUBTITLE_BANNED_TERMS=str(root / "env.json")):
+                self.assertEqual(
+                    USER_CONFIG.resolve_banned_terms_path(
+                        root / "override.json", shipped=shipped
+                    ),
+                    root / "override.json",
                 )
 
     def test_api_key_reads_legacy_oil_file_when_chaochun_missing(self):

@@ -34,6 +34,7 @@ metadata:
 - 用户只要用自然语言说“关闭章节进度条”或同义表达，本次任务就在准备和烧录命令中都传 `--no-progress`，不生成章节，也不显示进度条；用户说“开启章节进度条”时传 `--progress`。这是单次任务开关，不要求用户修改配置文件。
 - 正常烧录会识别持续出现的人脸区域并执行固定轻度美颜；用户要求保持原画时传 `--no-beauty`。
 - 不覆盖已有 MP4、SRT 或 ASS。目标存在时使用新文件名，除非用户明确同意覆盖。
+- 烧录前先问用户这次要不要把词表里的说法换成通用说法（违禁词泛化改写）。默认关闭。用户本任务已经明确说过开启或关闭时，沿用该选择，不要重复追问，也不要按发布平台自行决定。
 
 ## 初始化
 
@@ -62,6 +63,7 @@ API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需�
   "video_library_root": "/optional/path/to/video-library",
   "hotwords": "/optional/path/to/hotwords.json",
   "glossary": "/optional/custom/path/to/glossary.json",
+  "banned_terms": "/optional/path/to/banned_terms.json",
   "vocabulary_cache": "/optional/path/to/vocabulary-cache.json",
   "subtitles": {
     "progress_enabled": true,
@@ -73,6 +75,8 @@ API Key 优先读取 `DASHSCOPE_API_KEY`，否则读取 `API_KEY_FILE`。只需�
 新配置优先使用 `CHAOCHUN_SUBTITLE_CONFIG`（以及同前缀的 `CHAOCHUN_SUBTITLE_API_KEY_FILE`、`CHAOCHUN_SUBTITLE_PROGRESS_ENABLED` 等）。查找顺序为：新环境变量 → `~/.config/chaochun-subtitle/` → 遗留 `OIL_SUBTITLE_*` / `SCREEN_STUDIO_EDITOR_*` → `~/.config/oil-subtitle/`。不要把用户配置、API Key、个人术语表或绝对路径提交进 Skill。
 
 个人 glossary 默认位于 `~/.config/chaochun-subtitle/glossary.json`。只有需要换位置时才配置 `glossary`；转录、预览学习和烧录始终解析同一个路径。上游 `~/.config/oil-subtitle/glossary.json` 仍可作为回退。
+
+违禁词泛化词表和 glossary 分开，默认用仓库 [`config/banned_terms.json`](config/banned_terms.json)。只有要改个人词表位置时才配置 `banned_terms`，或设置 `CHAOCHUN_SUBTITLE_BANNED_TERMS`。个人文件 `~/.config/chaochun-subtitle/banned_terms.json` 会盖过仓库种子表。字段说明见 [DESIGN.md](DESIGN.md)。
 
 ## 工作流
 
@@ -226,6 +230,17 @@ PY
 
 ### 7. 草稿检查和烧录
 
+先确认这次烧录要不要做违禁词泛化改写，再生成 SRT 草稿。用户本任务还没表态时，先问：
+
+> 烧录前确认一下：这次字幕要不要把词表里的品牌名、平台名换成通用说法？中文和英文都会改。国内社交平台发布时常常需要打开，别的渠道常常保持原词。只改画面上的字幕；如果口播还在说原来的名字，声音里仍然听得到。回复「开启」或「关闭」即可。
+
+- 关闭：下面的 `burn_subtitles.py` 都不要加 `--paraphrase-banned-terms`。
+- 开启：草稿和正式烧录的每一条 `burn_subtitles.py` 都加上 `--paraphrase-banned-terms`。要换词表时再加 `--banned-terms /path/to/banned_terms.json`。
+- 只做词表里的确定性替换。中文台词和章节标题用该条的 `replace.zh`，英文字幕用 `replace.en`。不要让模型自由改写整句，不要用星号、谐音或形近字。
+- 词表没写到、但读字幕时觉得像是同一类需要换成通用说法的名称：把原句列出来请用户确认。用户同意后才把新行写入词表再烧，不要自己发明替换。
+- 开启后查看输出旁的 `*.banned-term-paraphrase.json`。`ambiguous_hits` 里的句子（种子表里的单独大写 X 会落在这里）要在交付说明里点名。
+- 再次提醒：口播没改时，字幕替换盖不住声音。
+
 先生成 SRT 草稿：
 
 ```bash
@@ -266,6 +281,7 @@ PY
 - 开头、中段、结尾字幕与声音同步；上方为章节目录与半透明进度叠在同一条带（有章节时），下方为中英白字，中间为未叠字的原画；无运行时钟、无独立细进度条；
 - 字幕没有遮挡持续出现的人脸区域（字幕在黑边内）；
 - 章节标题若启用，只出现在上方黑边，不与字幕重叠；
-- 是否启用美颜、是否双语、输出路径与用户要求一致。
+- 是否启用美颜、是否双语、输出路径与用户要求一致；
+- 若本次开启了泛化改写：成片里词表命中的中文、英文和章节标题都已换成通用说法，`ambiguous_hits` 已向用户说明，并已提醒口播可能仍是原词。
 
 报告最终视频、SRT、ASS 和工作目录路径，并说明需要用户重点预览的位置。修订成片时，新版通过验证后再更新后续发布包的引用，不能让发布阶段继续使用旧视频。

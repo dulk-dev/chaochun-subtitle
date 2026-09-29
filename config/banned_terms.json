@@ -1,0 +1,59 @@
+{
+  "$schema": "./banned_terms.schema.json",
+  "version": 1,
+  "strategy": "generic-paraphrase",
+  "description": "烧录时可选的显示用泛化词表。status=guess 的替换用语是种子建议，可直接改。只做表内确定性替换。",
+  "entries": [
+    {
+      "id": "codex",
+      "status": "guess",
+      "note": "种子行。Codex 收成通用的编程助手说法，便于和 Claude Code 区分。",
+      "replace": {
+        "zh": "AI 编程助手",
+        "en": "AI coding assistant"
+      },
+      "terms": [
+        { "text": "Codex", "match": "phrase" }
+      ]
+    },
+    {
+      "id": "claude-code",
+      "status": "guess",
+      "note": "种子行。与 Codex 用了不同的通用说法，避免同一条视频里两个名字变成同一句。",
+      "replace": {
+        "zh": "AI 编程工具",
+        "en": "AI coding tool"
+      },
+      "terms": [
+        { "text": "Claude Code", "match": "phrase" }
+      ]
+    },
+    {
+      "id": "youtube",
+      "status": "guess",
+      "note": "种子行。油管是常见口头说法，和 YouTube 共用同一组通用替换。",
+      "replace": {
+        "zh": "视频平台",
+        "en": "video platform"
+      },
+      "terms": [
+        { "text": "YouTube", "match": "phrase" },
+        { "text": "油管", "match": "phrase" }
+      ]
+    },
+    {
+      "id": "twitter",
+      "status": "guess",
+      "note": "种子行。单独的大写 X 会命中，但也可能撞上 OS X、iPhone X 这类说法，所以标成 ambiguous，烧录报告会列出原句。小写 x 不替换。",
+      "replace": {
+        "zh": "社交平台",
+        "en": "social platform"
+      },
+      "terms": [
+        { "text": "Twitter", "match": "phrase" },
+        { "text": "推特", "match": "phrase" },
+        { "text": "X", "match": "token", "case_sensitive": true, "ambiguous": true }
+      ]
+    }
+  ]
+}

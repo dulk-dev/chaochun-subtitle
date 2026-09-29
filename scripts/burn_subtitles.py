@@ -20,6 +20,16 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+from banned_terms import (
+    build_report,
+    format_report_log,
+    load_lexicon,
+    paraphrase_chapters,
+    paraphrase_lines,
+    report_path_for,
+    resolve_lexicon_path,
+    write_report,
+)
 from subtitle_text import add_cjk_spacing
 from user_config import resolve_glossary_path as resolve_user_glossary_path
 from user_config import resolve_progress_enabled
@@ -105,6 +115,36 @@ def set_display_replacements(entries: list[dict]):
 def resolve_glossary_path(override: str | None = None) -> Path | None:
     """Resolve the same personal glossary used by ASR and manual learning."""
     return resolve_user_glossary_path(override)
+
+
+def load_paraphrase_lexicon(override: str | None = None):
+    """Load the opted-in display lexicon. Missing files are an error."""
+    return load_lexicon(resolve_lexicon_path(override))
+
+
+def apply_banned_term_paraphrase(
+    lines: list[dict],
+    chapters: list[dict] | None,
+    lexicon,
+) -> tuple[list[dict], list[dict], dict]:
+    """Apply the lexicon to every burned language track.
+
+    Chinese caption text and chapter titles use ``replace.zh``. English
+    caption fields use ``replace.en``. Unlisted wording is left unchanged.
+    """
+    new_lines, line_hits = paraphrase_lines(lines, lexicon)
+    new_chapters, chapter_hits = paraphrase_chapters(chapters or [], lexicon)
+    return new_lines, new_chapters, build_report(lexicon, line_hits + chapter_hits)
+
+
+def emit_paraphrase_report(report: dict, output: Path) -> Path:
+    """Write the burn-time paraphrase report next to a draft or subtitle file."""
+    path = report_path_for(output)
+    write_report(path, report)
+    log(format_report_log(report))
+    log(report["audio_reminder"])
+    log(f"Banned-term report: {path}")
+    return path
 
 
 def load_user_glossary(override: str | None = None) -> list[dict]:
@@ -1762,6 +1802,22 @@ def main():
     parser.add_argument("--glossary", default=None,
                         help="Glossary JSON path; overrides environment and user config")
     parser.add_argument(
+        "--paraphrase-banned-terms",
+        action="store_true",
+        help=(
+            "Replace banned-term lexicon matches with generic paraphrases on "
+            "every burned language track. Off unless this flag is set."
+        ),
+    )
+    parser.add_argument(
+        "--banned-terms",
+        default=None,
+        help=(
+            "Banned-term lexicon JSON. Overrides the user config path. "
+            "Defaults to the personal file, then config/banned_terms.json."
+        ),
+    )
+    parser.add_argument(
         "--chapters",
         default=None,
         help="Optional broad chapter JSON; rendered only when video duration is over three minutes.",
@@ -1850,6 +1906,18 @@ def main():
     if glossary:
         set_display_replacements(glossary)
         log(f"📚 Loaded {len(glossary)} glossary replacements")
+
+    paraphrase_lexicon = None
+    if args.paraphrase_banned_terms:
+        try:
+            paraphrase_lexicon = load_paraphrase_lexicon(args.banned_terms)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"❌ {exc}")
+            sys.exit(1)
+        log(
+            f"🔤 Banned-term paraphrase enabled "
+            f"({paraphrase_lexicon.entry_count} entries, {paraphrase_lexicon.path})"
+        )
 
     # Get video dimensions
     probe = subprocess.run(
@@ -2004,15 +2072,25 @@ def main():
         f"(top {layout['top_pad']}px, bottom {layout['bottom_pad']}px)"
     )
 
-    if args.draft_output:
-        write_subtitle_draft(
-            lines,
-            Path(args.draft_output),
-            effective_max_chars,
-            preserve_text=bool(srt_input_path),
-        )
-    if args.draft_only:
-        return
+    if args.draft_output or args.draft_only:
+        draft_lines = lines
+        draft_hits: list[dict] = []
+        if paraphrase_lexicon is not None:
+            draft_lines, draft_hits = paraphrase_lines(lines, paraphrase_lexicon)
+        if args.draft_output:
+            write_subtitle_draft(
+                draft_lines,
+                Path(args.draft_output),
+                effective_max_chars,
+                preserve_text=bool(srt_input_path),
+            )
+        if args.draft_only:
+            if paraphrase_lexicon is not None:
+                emit_paraphrase_report(
+                    build_report(paraphrase_lexicon, draft_hits),
+                    Path(args.draft_output) if args.draft_output else output_path,
+                )
+            return
 
     if args.bilingual:
         missing_english = [line for line in lines if not line_english_text(line)]
@@ -2023,6 +2101,12 @@ def main():
             except Exception as exc:
                 print(f"❌ Bilingual translation failed: {exc}")
                 sys.exit(1)
+
+    if paraphrase_lexicon is not None:
+        lines, chapters, paraphrase_report = apply_banned_term_paraphrase(
+            lines, chapters, paraphrase_lexicon
+        )
+        emit_paraphrase_report(paraphrase_report, ass_path)
 
     # Generate ASS (at output resolution so font size is correct)
     generate_ass(
