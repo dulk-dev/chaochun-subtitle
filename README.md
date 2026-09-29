@@ -170,16 +170,17 @@ FunAudio ASR、Qwen 字幕断句、章节生成、英文翻译和 hotwords 共�
 
 这只改画面上的字幕，不改口播。声音里如果仍是原来的名称，字幕替换可能不够。词表之外的句子不会被自动改写。说明见 [DESIGN.md](DESIGN.md)，种子表在 [`config/banned_terms.json`](config/banned_terms.json)。
 
-种子行目前是建议用语（`status: guess`），可以直接改：
+当前主表是研究整理的初始表，可以直接改：
 
 | 原文 | 中文显示 | 英文显示 |
 | --- | --- | --- |
-| Codex | AI 编程助手 | AI coding assistant |
-| Claude Code | AI 编程工具 | AI coding tool |
-| YouTube、油管 | 视频平台 | video platform |
-| Twitter、推特，以及单独的大写 X | 社交平台 | social platform |
+| Codex | AI编程工具 | AI coding tool |
+| Twitter、推特、X平台 | 社交平台 | social platform |
+| YouTube、油管 | 视频网站 | video site |
+| TikTok | 短视频平台 | short-video platform |
+| 淘宝 | 电商平台 | e-commerce platform |
 
-单独的大写 X 也可能撞上别的说法，烧录报告会把这些句子列出来。小写 x 不替换。
+不匹配单独的字母 X。引流留联系方式、形近字，以及 Claude、ChatGPT、GPT、Gemini、Cursor 都不在这张表里。抖音、小红书这类跨平台叫法要先知道发布到哪里，先不放进主表。详见 [DESIGN.md](DESIGN.md)。
 
 个人词表放在 `~/.config/chaochun-subtitle/banned_terms.json`，或在上面的配置里写 `banned_terms`，也可以设 `CHAOCHUN_SUBTITLE_BANNED_TERMS`。没有个人文件时使用仓库种子表。不要把这些通用说法写进 glossary。
 

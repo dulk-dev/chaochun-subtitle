@@ -238,7 +238,7 @@ PY
 - 开启：草稿和正式烧录的每一条 `burn_subtitles.py` 都加上 `--paraphrase-banned-terms`。要换词表时再加 `--banned-terms /path/to/banned_terms.json`。
 - 只做词表里的确定性替换。中文台词和章节标题用该条的 `replace.zh`，英文字幕用 `replace.en`。不要让模型自由改写整句，不要用星号、谐音或形近字。
 - 词表没写到、但读字幕时觉得像是同一类需要换成通用说法的名称：把原句列出来请用户确认。用户同意后才把新行写入词表再烧，不要自己发明替换。
-- 开启后查看输出旁的 `*.banned-term-paraphrase.json`。`ambiguous_hits` 里的句子（种子表里的单独大写 X 会落在这里）要在交付说明里点名。
+- 开启后查看输出旁的 `*.banned-term-paraphrase.json`。仓库主表不匹配单独的字母 X，只匹配 `X平台`、Twitter、推特。个人词表若标了 `ambiguous`，把 `ambiguous_hits` 里的句子在交付说明里点名。
 - 再次提醒：口播没改时，字幕替换盖不住声音。
 
 先生成 SRT 草稿：

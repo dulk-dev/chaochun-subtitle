@@ -8,15 +8,15 @@
 
 - 只有 `burn_subtitles.py --paraphrase-banned-terms` 会读取词表。转录、glossary 纠错和预览保存都不走这张表。
 - 中文台词和章节标题用条目的 `replace.zh`，英文字幕用 `replace.en`。同一条里的拉丁名出现在中文轨时，也换成中文通用说法。
-- 匹配是表内的固定词，区分长短语，不把短词切进更长的英文单词。单独的大写 `X` 会命中，并在报告里标成需要看一眼的命中；小写 `x` 不替换。
-- `strategy` 只能是 `generic-paraphrase`。星号遮挡和形近字写法不会被接受。
+- 匹配是表内的固定词，区分长短语，不把短词切进更长的英文单词。仓库主表不匹配单独的字母 `X`，只匹配 `X平台`、Twitter、推特。
+- `strategy` 只能是 `generic-paraphrase`。星号遮挡、形近字和零宽字符不在这张表里。
 - 报告写在草稿或 ASS 旁边，文件名是 `*.banned-term-paraphrase.json`。里面有命中次数，以及一句提醒：声音里如果仍是原来的名称，只改字幕可能不够。
 
 Agent 可以指出词表没覆盖、但看起来像同一类名称的句子，等用户确认后再加行。不要在词表之外临时发明替换。
 
 ## 词表放哪
 
-可直接改的种子表是仓库里的 [`config/banned_terms.json`](config/banned_terms.json)，字段见 [`config/banned_terms.schema.json`](config/banned_terms.schema.json)。`status: guess` 表示这行替换用语是建议，可以改得更顺口。
+可直接改的主表是仓库里的 [`config/banned_terms.json`](config/banned_terms.json)，字段见 [`config/banned_terms.schema.json`](config/banned_terms.schema.json)。当前行是研究整理的初始表，`status` 为 `confirmed`。个人词表里如果某行还没定稿，可以标 `guess`。
 
 个人文件优先于种子表，查找顺序：
 
@@ -27,3 +27,12 @@ Agent 可以指出词表没覆盖、但看起来像同一类名称的句子，�
 5. 仓库 `config/banned_terms.json`
 
 这张表和 hotwords、glossary 分开。glossary 仍只负责识别纠错，不要把发布用的通用说法写进错词表。
+
+## 不进主表
+
+下面这些不做精确词匹配，也不要写进默认词表：
+
+- 引流、留联系方式、进群、扫码这一类，要看整句上下文，不能靠固定词替换。
+- 形近字、火星文、零宽字符。
+- Claude、Claude Code、ChatGPT、GPT、Gemini、Cursor。这一轮没有足够依据，先不收录。
+- 抖音、小红书这类国内平台的跨平台叫法，要先知道成片准备发到哪里，再决定要不要改。那是以后的可选扩展，不放进现在这份自动启用的主表。
