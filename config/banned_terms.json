@@ -1,71 +1,36 @@
-{
-  "$schema": "./banned_terms.schema.json",
-  "version": 1,
-  "strategy": "generic-paraphrase",
-  "description": "烧录时可选的显示用泛化词表。当前条目是研究整理的初始表，只做表内确定性替换。不匹配单独的字母 X。",
-  "entries": [
-    {
-      "id": "codex",
-      "status": "confirmed",
-      "note": "初始表。Codex 换成通用的编程工具说法。",
-      "replace": {
-        "zh": "AI编程工具",
-        "en": "AI coding tool"
-      },
-      "terms": [
-        { "text": "Codex", "match": "phrase" }
-      ]
-    },
-    {
-      "id": "twitter",
-      "status": "confirmed",
-      "note": "初始表。只收录 Twitter、推特、X平台，不匹配单独的 X。",
-      "replace": {
-        "zh": "社交平台",
-        "en": "social platform"
-      },
-      "terms": [
-        { "text": "Twitter", "match": "phrase" },
-        { "text": "推特", "match": "phrase" },
-        { "text": "X平台", "match": "phrase" }
-      ]
-    },
-    {
-      "id": "youtube",
-      "status": "confirmed",
-      "note": "初始表。油管和 YouTube 共用同一组通用替换。",
-      "replace": {
-        "zh": "视频网站",
-        "en": "video site"
-      },
-      "terms": [
-        { "text": "YouTube", "match": "phrase" },
-        { "text": "油管", "match": "phrase" }
-      ]
-    },
-    {
-      "id": "tiktok",
-      "status": "confirmed",
-      "note": "初始表。",
-      "replace": {
-        "zh": "短视频平台",
-        "en": "short-video platform"
-      },
-      "terms": [
-        { "text": "TikTok", "match": "phrase" }
-      ]
-    },
-    {
-      "id": "taobao",
-      "status": "confirmed",
-      "note": "初始表。",
-      "replace": {
-        "zh": "电商平台",
-        "en": "e-commerce platform"
-      },
-      "terms": [
-        { "text": "淘宝", "match": "phrase" }
-      ]
-    }
-  ]
-}
+[
+  { "term": "Codex", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Claude Code", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Cursor", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Claude", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "ChatGPT", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "Gemini", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "豆包", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "Doubao", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "GPT", "zh": "AI模型", "en": "AI model" },
+
+  { "term": "Twitter", "zh": "社交平台", "en": "social platform" },
+  { "term": "推特", "zh": "社交平台", "en": "social platform" },
+  { "term": "X平台", "zh": "社交平台", "en": "social platform" },
+  { "term": "小红书", "zh": "内容平台", "en": "content platform" },
+  { "term": "微博", "zh": "社交平台", "en": "social platform" },
+
+  { "term": "YouTube", "zh": "视频网站", "en": "video site" },
+  { "term": "油管", "zh": "视频网站", "en": "video site" },
+  { "term": "TikTok", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "抖音", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "Douyin", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "快手", "zh": "短视频平台", "en": "short-video platform" },
+
+  { "term": "淘宝", "zh": "电商平台", "en": "e-commerce platform" },
+  { "term": "京东", "zh": "电商平台", "en": "e-commerce platform" },
+
+  { "term": "飞书", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "Feishu", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "钉钉", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "企业微信", "zh": "协作工具", "en": "collaboration tool" },
+
+  { "term": "微信", "zh": "通讯工具", "en": "messaging app" },
+  { "term": "WeChat", "zh": "通讯工具", "en": "messaging app" },
+  { "term": "QQ", "zh": "通讯工具", "en": "messaging app" }
+]

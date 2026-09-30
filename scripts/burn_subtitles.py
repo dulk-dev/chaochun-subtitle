@@ -129,8 +129,8 @@ def apply_banned_term_paraphrase(
 ) -> tuple[list[dict], list[dict], dict]:
     """Apply the lexicon to every burned language track.
 
-    Chinese caption text and chapter titles use ``replace.zh``. English
-    caption fields use ``replace.en``. Unlisted wording is left unchanged.
+    Chinese caption text and chapter titles use the row's ``zh``. English
+    caption fields use ``en``. Unlisted wording is left unchanged.
     """
     new_lines, line_hits = paraphrase_lines(lines, lexicon)
     new_chapters, chapter_hits = paraphrase_chapters(chapters or [], lexicon)

@@ -17,24 +17,17 @@ AUDIO_REMINDER = (
     "只替换画面上的字幕，不会改口播。如果声音里仍是原来的名称，字幕替换可能不够。"
 )
 
-_SCHEMA_VERSION = 1
 _STRATEGY = "generic-paraphrase"
-_TOP_KEYS = {"$schema", "version", "strategy", "description", "entries"}
-_ENTRY_KEYS = {"id", "status", "note", "replace", "terms"}
-_TERM_KEYS = {"text", "match", "case_sensitive", "ambiguous"}
-_REPLACE_KEYS = {"zh", "en"}
-_STATUSES = {"guess", "confirmed"}
-_MATCH_MODES = {"phrase", "token"}
+_ROW_KEYS = {"term", "zh", "en"}
 _MASK_REPLACEMENT = re.compile(r"^[\*＊★☆×.\-—_~\s]+$")
 _CJK = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
+_SINGLE_LATIN = re.compile(r"^[A-Za-z]$")
 
 
 @dataclass(frozen=True)
 class _Rule:
-    entry_id: str
     term: str
     pattern: re.Pattern[str]
-    ambiguous: bool
     length: int
 
 
@@ -72,44 +65,29 @@ def load_lexicon(path: str | Path) -> Lexicon:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Banned-term lexicon is not valid JSON: {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"Banned-term lexicon must be a JSON object: {source}")
-    unknown = set(payload) - _TOP_KEYS
-    if unknown:
-        raise ValueError(f"Unknown banned-term lexicon fields: {', '.join(sorted(unknown))}")
-    version = payload.get("version")
-    if version != _SCHEMA_VERSION:
-        raise ValueError(f"Banned-term lexicon version must be {_SCHEMA_VERSION}: {source}")
-    strategy = payload.get("strategy", _STRATEGY)
-    if strategy != _STRATEGY:
+    if not isinstance(payload, list) or not payload:
         raise ValueError(
-            "Banned-term lexicon strategy must be generic-paraphrase: "
-            f"{source}"
+            "Banned-term lexicon must be a non-empty JSON array of "
+            f"{{term, zh, en}} rows: {source}"
         )
-    entries = payload.get("entries")
-    if not isinstance(entries, list) or not entries:
-        raise ValueError(f"Banned-term lexicon needs a non-empty entries array: {source}")
 
     replacements: dict[str, dict[str, str]] = {}
     rules: list[_Rule] = []
-    seen_ids: set[str] = set()
-    seen_terms: set[tuple[str, str, bool]] = set()
-    for index, entry in enumerate(entries, 1):
-        entry_id, replace, compiled = _compile_entry(entry, index, seen_terms)
-        if entry_id in seen_ids:
-            raise ValueError(f"Duplicate banned-term entry id: {entry_id}")
-        seen_ids.add(entry_id)
-        replacements[entry_id] = replace
-        rules.extend(compiled)
-    rules.sort(key=lambda rule: (-rule.length, rule.entry_id, rule.term))
-    description = payload.get("description") or ""
-    if not isinstance(description, str):
-        raise ValueError("Banned-term lexicon description must be a string")
+    seen_terms: set[str] = set()
+    for index, entry in enumerate(payload, 1):
+        rule, wording = _compile_row(entry, index)
+        identity = rule.term.casefold()
+        if identity in seen_terms:
+            raise ValueError(f"Duplicate banned term: {rule.term}")
+        seen_terms.add(identity)
+        replacements[rule.term] = wording
+        rules.append(rule)
+    rules.sort(key=lambda rule: (-rule.length, rule.term))
     return Lexicon(
         path=source,
-        strategy=strategy,
-        description=description,
-        entry_count=len(entries),
+        strategy=_STRATEGY,
+        description="",
+        entry_count=len(payload),
         replacements=replacements,
         _rules=tuple(rules),
     )
@@ -241,107 +219,50 @@ def report_path_for(output: Path) -> Path:
     return output.with_name(f"{output.stem}.banned-term-paraphrase.json")
 
 
-def _compile_entry(
-    entry: object,
-    index: int,
-    seen_terms: set[tuple[str, str, bool]],
-) -> tuple[str, dict[str, str], list[_Rule]]:
+def _compile_row(entry: object, index: int) -> tuple[_Rule, dict[str, str]]:
     if not isinstance(entry, dict):
-        raise ValueError(f"Banned-term entry {index} must be an object")
-    unknown = set(entry) - _ENTRY_KEYS
+        raise ValueError(f"Banned-term row {index} must be an object with term, zh, and en")
+    unknown = set(entry) - _ROW_KEYS
     if unknown:
         raise ValueError(
-            f"Unknown fields on banned-term entry {index}: {', '.join(sorted(unknown))}"
+            f"Banned-term row {index} only accepts term, zh, and en"
         )
-    entry_id = str(entry.get("id") or "").strip()
-    if not entry_id:
-        raise ValueError(f"Banned-term entry {index} needs an id")
-    status = entry.get("status", "guess")
-    if status not in _STATUSES:
-        raise ValueError(f"Banned-term entry {entry_id} status must be guess or confirmed")
-    note = entry.get("note", "")
-    if not isinstance(note, str):
-        raise ValueError(f"Banned-term entry {entry_id} note must be a string")
-    replace = entry.get("replace")
-    if not isinstance(replace, dict):
-        raise ValueError(f"Banned-term entry {entry_id} needs a replace object")
-    extra_replace = set(replace) - _REPLACE_KEYS
-    if extra_replace:
+    term = entry.get("term")
+    if not isinstance(term, str) or not term.strip():
+        raise ValueError(f"Banned-term row {index} needs term")
+    term = term.strip()
+    if _SINGLE_LATIN.fullmatch(term):
         raise ValueError(
-            f"Banned-term entry {entry_id} replace only accepts zh and en"
+            f"Banned-term row {index} is a single letter ({term}). "
+            "Use a full name, such as X平台."
         )
     wording = {
-        "zh": _clean_replacement(replace.get("zh"), entry_id, "zh"),
-        "en": _clean_replacement(replace.get("en"), entry_id, "en"),
+        "zh": _clean_replacement(entry.get("zh"), term, "zh"),
+        "en": _clean_replacement(entry.get("en"), term, "en"),
     }
-    terms = entry.get("terms")
-    if not isinstance(terms, list) or not terms:
-        raise ValueError(f"Banned-term entry {entry_id} needs at least one term")
-    rules: list[_Rule] = []
-    for term_index, spec in enumerate(terms, 1):
-        text, match, case_sensitive, ambiguous = _term_spec(spec, entry_id, term_index)
-        identity = (text if case_sensitive else text.casefold(), match, case_sensitive)
-        if identity in seen_terms:
-            raise ValueError(f"Duplicate banned term: {text}")
-        seen_terms.add(identity)
-        rules.append(
-            _Rule(
-                entry_id=entry_id,
-                term=text,
-                pattern=_compile_pattern(text, case_sensitive),
-                ambiguous=ambiguous,
-                length=len(re.sub(r"\s+", "", text)),
-            )
-        )
-    return entry_id, wording, rules
+    return (
+        _Rule(
+            term=term,
+            pattern=_compile_pattern(term),
+            length=len(re.sub(r"\s+", "", term)),
+        ),
+        wording,
+    )
 
 
-def _term_spec(spec: object, entry_id: str, index: int) -> tuple[str, str, bool, bool]:
-    if isinstance(spec, str):
-        text = spec.strip()
-        match = "phrase"
-        case_sensitive = False
-        ambiguous = False
-        explicit_case = False
-        explicit_ambiguous = False
-    elif isinstance(spec, dict):
-        unknown = set(spec) - _TERM_KEYS
-        if unknown:
-            raise ValueError(
-                f"Unknown fields on {entry_id} term {index}: {', '.join(sorted(unknown))}"
-            )
-        text = str(spec.get("text") or "").strip()
-        match = spec.get("match", "phrase")
-        explicit_case = "case_sensitive" in spec
-        explicit_ambiguous = "ambiguous" in spec
-        case_sensitive = bool(spec.get("case_sensitive", False))
-        ambiguous = bool(spec.get("ambiguous", False))
-    else:
-        raise ValueError(f"Banned-term entry {entry_id} term {index} is invalid")
-    if not text:
-        raise ValueError(f"Banned-term entry {entry_id} has an empty term")
-    if match not in _MATCH_MODES:
-        raise ValueError(f"Banned-term entry {entry_id} match must be phrase or token")
-    if match == "token" and len(text) == 1 and not explicit_case:
-        case_sensitive = True
-    if match == "token" and len(text) == 1 and not explicit_ambiguous:
-        ambiguous = True
-    return text, match, case_sensitive, ambiguous
-
-
-def _clean_replacement(value: object, entry_id: str, track: str) -> str:
+def _clean_replacement(value: object, term: str, track: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Banned-term entry {entry_id} needs replace.{track}")
+        raise ValueError(f"Banned term {term} needs {track}")
     wording = value.strip()
     if _MASK_REPLACEMENT.fullmatch(wording):
         raise ValueError(
-            f"Banned-term entry {entry_id} replace.{track} must be a paraphrase, not a mask"
+            f"Banned term {term} {track} must be a paraphrase, not a mask"
         )
     return wording
 
 
-def _compile_pattern(text: str, case_sensitive: bool) -> re.Pattern[str]:
-    flags = 0 if case_sensitive else re.IGNORECASE
+def _compile_pattern(text: str) -> re.Pattern[str]:
+    flags = re.IGNORECASE
     if _CJK.search(text):
         return re.compile(re.escape(text), flags)
     parts = [re.escape(part) for part in re.split(r"\s+", text) if part]
@@ -371,14 +292,14 @@ def _apply_track(text: str, lexicon: Lexicon, track: str) -> tuple[str, list[dic
             continue
         if matched.end() <= index:
             raise RuntimeError(f"Banned-term pattern for {matched_rule.term} made no progress")
-        replacement = lexicon.replacements[matched_rule.entry_id][track]
+        replacement = lexicon.replacements[matched_rule.term][track]
         hits.append(
             {
-                "entry": matched_rule.entry_id,
+                "entry": matched_rule.term,
                 "term": matched_rule.term,
                 "matched": matched.group(0),
                 "replacement": replacement,
-                "ambiguous": matched_rule.ambiguous,
+                "ambiguous": False,
                 "context": _context(text, matched.start(), matched.end()),
             }
         )

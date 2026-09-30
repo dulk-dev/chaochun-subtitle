@@ -12,92 +12,103 @@ import burn_subtitles as BURN  # noqa: E402
 
 
 def _lexicon(entries: list[dict]) -> BANNED.Lexicon:
-    payload = {
-        "version": 1,
-        "strategy": "generic-paraphrase",
-        "entries": entries,
-    }
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "banned_terms.json"
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.write_text(json.dumps(entries), encoding="utf-8")
         return BANNED.load_lexicon(path)
 
 
 class BannedTermLexiconTests(unittest.TestCase):
-    def test_shipped_table_matches_curated_initial_terms(self):
+    def test_shipped_table_is_simple_rows(self):
         payload = json.loads(BANNED.shipped_lexicon_path().read_text(encoding="utf-8"))
-        terms = [
-            spec["text"] if isinstance(spec, dict) else spec
-            for entry in payload["entries"]
-            for spec in entry["terms"]
-        ]
-        self.assertEqual(
-            terms,
-            ["Codex", "Twitter", "推特", "X平台", "YouTube", "油管", "TikTok", "淘宝"],
-        )
+        self.assertIsInstance(payload, list)
+        terms = [row["term"] for row in payload]
+        self.assertTrue(all(set(row) == {"term", "zh", "en"} for row in payload))
         self.assertNotIn("X", terms)
-        self.assertTrue(all(entry.get("status") == "confirmed" for entry in payload["entries"]))
+        for required in (
+            "Codex",
+            "Claude",
+            "Claude Code",
+            "ChatGPT",
+            "GPT",
+            "Gemini",
+            "Cursor",
+            "Twitter",
+            "推特",
+            "X平台",
+            "YouTube",
+            "油管",
+            "TikTok",
+            "淘宝",
+            "抖音",
+            "飞书",
+            "豆包",
+            "微信",
+        ):
+            self.assertIn(required, terms)
         lexicon = BANNED.load_lexicon(BANNED.shipped_lexicon_path())
         self.assertEqual(lexicon.strategy, "generic-paraphrase")
         self.assertEqual(
-            lexicon.replacements["codex"],
+            lexicon.replacements["Codex"],
             {"zh": "AI编程工具", "en": "AI coding tool"},
         )
         self.assertEqual(
-            lexicon.replacements["twitter"],
+            lexicon.replacements["Claude Code"],
+            {"zh": "AI编程工具", "en": "AI coding tool"},
+        )
+        self.assertEqual(
+            lexicon.replacements["Twitter"],
             {"zh": "社交平台", "en": "social platform"},
         )
         self.assertEqual(
-            lexicon.replacements["youtube"],
-            {"zh": "视频网站", "en": "video site"},
-        )
-        self.assertEqual(
-            lexicon.replacements["tiktok"],
+            lexicon.replacements["抖音"],
             {"zh": "短视频平台", "en": "short-video platform"},
         )
         self.assertEqual(
-            lexicon.replacements["taobao"],
-            {"zh": "电商平台", "en": "e-commerce platform"},
+            lexicon.replacements["微信"],
+            {"zh": "通讯工具", "en": "messaging app"},
         )
 
-    def test_rejects_homoglyph_strategy_and_mask_replacements(self):
+    def test_rejects_extra_fields_masks_and_single_letters(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "banned_terms.json"
             path.write_text(
                 json.dumps(
                     {
-                        "version": 1,
                         "strategy": "homoglyph",
-                        "entries": [
-                            {
-                                "id": "example",
-                                "replace": {"zh": "例子", "en": "example"},
-                                "terms": ["Example"],
-                            }
-                        ],
+                        "entries": [{"term": "Example", "zh": "例子", "en": "example"}],
                     }
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "generic-paraphrase"):
+            with self.assertRaisesRegex(ValueError, "JSON array"):
                 BANNED.load_lexicon(path)
             path.write_text(
                 json.dumps(
-                    {
-                        "version": 1,
-                        "strategy": "generic-paraphrase",
-                        "entries": [
-                            {
-                                "id": "example",
-                                "replace": {"zh": "***", "en": "example"},
-                                "terms": ["Example"],
-                            }
-                        ],
-                    }
+                    [
+                        {
+                            "term": "Example",
+                            "zh": "例子",
+                            "en": "example",
+                            "note": "不要写备注",
+                        }
+                    ]
                 ),
                 encoding="utf-8",
             )
+            with self.assertRaisesRegex(ValueError, "term, zh, and en"):
+                BANNED.load_lexicon(path)
+            path.write_text(
+                json.dumps([{"term": "Example", "zh": "***", "en": "example"}]),
+                encoding="utf-8",
+            )
             with self.assertRaisesRegex(ValueError, "paraphrase"):
+                BANNED.load_lexicon(path)
+            path.write_text(
+                json.dumps([{"term": "X", "zh": "社交平台", "en": "social platform"}]),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "single letter"):
                 BANNED.load_lexicon(path)
 
     def test_bilingual_table_match_leaves_unlisted_words(self):
@@ -105,19 +116,19 @@ class BannedTermLexiconTests(unittest.TestCase):
         lines, hits = BANNED.paraphrase_lines(
             [
                 {
-                    "text": "用 Claude Code 和 Codex 把视频发到油管和推特，再看 TikTok 与淘宝",
-                    "en": "Use Claude Code and Codex, then post on YouTube and Twitter, plus TikTok",
+                    "text": "用 Claude Code 和 Codex 把视频发到油管和推特，再看 TikTok 与淘宝，微信别改成加群",
+                    "en": "Use Claude Code and Codex, then post on YouTube and Twitter, plus TikTok and WeChat",
                 }
             ],
             lexicon,
         )
         self.assertEqual(
             lines[0]["text"],
-            "用 Claude Code 和 AI编程工具 把视频发到视频网站和社交平台，再看 短视频平台 与电商平台",
+            "用 AI编程工具 和 AI编程工具 把视频发到视频网站和社交平台，再看 短视频平台 与电商平台，通讯工具别改成加群",
         )
         self.assertEqual(
             lines[0]["en"],
-            "Use Claude Code and AI coding tool, then post on video site and social platform, plus short-video platform",
+            "Use AI coding tool and AI coding tool, then post on video site and social platform, plus short-video platform and messaging app",
         )
         self.assertTrue(hits)
         self.assertTrue(all(not hit["ambiguous"] for hit in hits))
@@ -139,50 +150,48 @@ class BannedTermLexiconTests(unittest.TestCase):
         )
         self.assertEqual(
             lines[0]["text"],
-            "去 X 看看，也去社交平台。别改 next、OSX、抖音、加微信或 ChatGPT",
+            "去 X 看看，也去社交平台。别改 next、OSX、短视频平台、加通讯工具或 AI助手",
         )
         self.assertEqual(
             lines[0]["en"],
-            "Post on X today. Also social platform and social platform. Keep OS X, Claude Code, and ChatGPT.",
+            "Post on X today. Also social platform and social platform. Keep OS X, AI coding tool, and AI assistant.",
         )
         self.assertTrue(hits)
-        self.assertTrue(all(hit["term"] == "X平台" or hit["term"] == "Twitter" for hit in hits))
+        self.assertNotIn("X", {hit["term"] for hit in hits})
+        self.assertIn("X平台", {hit["term"] for hit in hits})
+        self.assertIn("Twitter", {hit["term"] for hit in hits})
         self.assertTrue(all(not hit["ambiguous"] for hit in hits))
         report = BANNED.build_report(lexicon, hits)
         self.assertEqual(report["ambiguous_hits"], [])
         self.assertIn("口播", report["audio_reminder"])
 
-    def test_single_letter_token_defaults_to_case_sensitive_review(self):
-        lexicon = _lexicon(
+    def test_longer_name_wins_over_shorter_product_name(self):
+        lexicon = BANNED.load_lexicon(BANNED.shipped_lexicon_path())
+        lines, hits = BANNED.paraphrase_lines(
             [
                 {
-                    "id": "mark",
-                    "replace": {"zh": "标记", "en": "mark"},
-                    "terms": [{"text": "Q", "match": "token"}],
+                    "text": "Claude Code 和 Claude，还有 ChatGPT 里的 GPT，以及企业微信",
+                    "en": "Claude Code, Claude, ChatGPT, and GPT",
                 }
-            ]
-        )
-        lines, hits = BANNED.paraphrase_lines(
-            [{"text": "按下 Q 和 q", "en": "Press Q and q"}],
+            ],
             lexicon,
         )
-        self.assertEqual(lines[0]["text"], "按下 标记 和 q")
-        self.assertEqual(lines[0]["en"], "Press mark and q")
-        self.assertTrue(all(hit["ambiguous"] for hit in hits))
+        self.assertEqual(
+            lines[0]["text"],
+            "AI编程工具 和 AI助手，还有 AI助手 里的 AI模型，以及协作工具",
+        )
+        self.assertEqual(
+            lines[0]["en"],
+            "AI coding tool, AI assistant, AI assistant, and AI model",
+        )
+        self.assertNotIn("Claude", lines[0]["en"])
+        self.assertTrue(all(hit["term"] != "微信" for hit in hits))
 
     def test_longer_phrase_wins_and_chapter_titles_use_chinese(self):
         lexicon = _lexicon(
             [
-                {
-                    "id": "short",
-                    "replace": {"zh": "短", "en": "short"},
-                    "terms": ["Code"],
-                },
-                {
-                    "id": "long",
-                    "replace": {"zh": "编程工具", "en": "coding tool"},
-                    "terms": ["Claude Code"],
-                },
+                {"term": "Code", "zh": "短", "en": "short"},
+                {"term": "Claude Code", "zh": "编程工具", "en": "coding tool"},
             ]
         )
         lines, _hits = BANNED.paraphrase_lines(
