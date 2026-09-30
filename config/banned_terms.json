@@ -1,0 +1,36 @@
+[
+  { "term": "Codex", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Claude Code", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Cursor", "zh": "AI编程工具", "en": "AI coding tool" },
+  { "term": "Claude", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "ChatGPT", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "Gemini", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "豆包", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "Doubao", "zh": "AI助手", "en": "AI assistant" },
+  { "term": "GPT", "zh": "AI模型", "en": "AI model" },
+
+  { "term": "Twitter", "zh": "社交平台", "en": "social platform" },
+  { "term": "推特", "zh": "社交平台", "en": "social platform" },
+  { "term": "X平台", "zh": "社交平台", "en": "social platform" },
+  { "term": "小红书", "zh": "内容平台", "en": "content platform" },
+  { "term": "微博", "zh": "社交平台", "en": "social platform" },
+
+  { "term": "YouTube", "zh": "视频网站", "en": "video site" },
+  { "term": "油管", "zh": "视频网站", "en": "video site" },
+  { "term": "TikTok", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "抖音", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "Douyin", "zh": "短视频平台", "en": "short-video platform" },
+  { "term": "快手", "zh": "短视频平台", "en": "short-video platform" },
+
+  { "term": "淘宝", "zh": "电商平台", "en": "e-commerce platform" },
+  { "term": "京东", "zh": "电商平台", "en": "e-commerce platform" },
+
+  { "term": "飞书", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "Feishu", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "钉钉", "zh": "协作工具", "en": "collaboration tool" },
+  { "term": "企业微信", "zh": "协作工具", "en": "collaboration tool" },
+
+  { "term": "微信", "zh": "通讯工具", "en": "messaging app" },
+  { "term": "WeChat", "zh": "通讯工具", "en": "messaging app" },
+  { "term": "QQ", "zh": "通讯工具", "en": "messaging app" }
+]

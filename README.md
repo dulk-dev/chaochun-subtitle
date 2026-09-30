@@ -12,7 +12,7 @@
 
 也可以只导出英文 SRT（与上游「英文 SRT 分支」相同）：保留原时间轴，不启动预览、不生成章节、不烧录视频。
 
-[快速开始](#快速开始) · [与上游的差异](#与上游-oil-subtitle-的差异) · [工作流程](#工作流程) · [维护词库](#维护-hotwords-与-glossary) · [数据边界](#数据边界)
+[快速开始](#快速开始) · [与上游的差异](#与上游-oil-subtitle-的差异) · [工作流程](#工作流程) · [维护词库](#维护-hotwords-与-glossary) · [发布用的可选泛化改写](#发布用的可选泛化改写) · [数据边界](#数据边界)
 
 ## 上游致谢
 
@@ -81,7 +81,7 @@ demo_subtitled.mp4
 5. 用 Qwen 完成字幕级断句；章节进度默认开启，视频严格超过 3 分钟时生成 2–6 个宽粒度章节，并在**上方黑边**用同一条带展示章节目录和半透明浅灰进度，不压原画和字幕。区段太窄、标题太长时，非当前章节用省略号截断为单行；当前进行中的章节在槽内横向滚动全文。
 6. 启动本地字幕编辑器，由用户检查 Agent 校对结果，并按需修改或删除字幕。
 7. 保存时自动提取人工修改并生成待审报告；Agent 判断是否需要显式加入个人 glossary，脚本不会自动写入。
-8. 生成中文 SRT、英文 SRT、ASS，并用 FFmpeg **pad 上下黑边**后一次烧录成片。烧录前若还没有英文，则按上游英文翻译规则逐条译出并写入 ASS。
+8. 生成中文 SRT、英文 SRT、ASS，并用 FFmpeg **pad 上下黑边**后一次烧录成片。烧录前若还没有英文，则按上游英文翻译规则逐条译出并写入 ASS。烧录前会先问要不要把词表中的说法换成通用说法；开启后中英文字幕都会替换。
 
 正常烧录还会检测持续出现的人脸区域并执行固定轻度美颜；需要保留原画时使用 `--no-beauty`。
 
@@ -148,12 +148,13 @@ FunAudio ASR、Qwen 字幕断句、章节生成、英文翻译和 hotwords 共�
 ]
 ```
 
-在 `~/.config/chaochun-subtitle/config.json` 中指向这两个文件（也可用 `CHAOCHUN_SUBTITLE_CONFIG` 指定路径）：
+在 `~/.config/chaochun-subtitle/config.json` 中指向这些文件（也可用 `CHAOCHUN_SUBTITLE_CONFIG` 指定路径）。`banned_terms` 只在希望改用个人词表时才需要：
 
 ```json
 {
   "hotwords": "~/.config/chaochun-subtitle/hotwords.json",
   "glossary": "~/.config/chaochun-subtitle/glossary.json",
+  "banned_terms": "~/.config/chaochun-subtitle/banned_terms.json",
   "subtitles": {
     "progress_enabled": true,
     "progress_min_duration_seconds": 180
@@ -162,6 +163,20 @@ FunAudio ASR、Qwen 字幕断句、章节生成、英文翻译和 hotwords 共�
 ```
 
 预览页保存后，脚本会固定比较修改前后的字幕，把可能复用的错词映射记录到 `manual-edit-review.json` 的 `pending`，但不会调用模型或自动追加 glossary。Agent 只在映射来自原句连续子串、保留必要上下文且不与已有规则冲突时显式写入；一次性改写、删句和标点调整保持忽略。hotwords 内容变化后，脚本会自动更新远程词表缓存。
+
+## 发布用的可选泛化改写
+
+烧录前可以另用一份词表，把字幕里已经列明的说法换成通用说法，方便同一条成片换一套显示措辞再发布。默认关闭。Agent 会在烧录前询问，不按平台自动打开。
+
+这只改画面上的字幕，不改口播。声音里如果仍是原来的名称，字幕替换可能不够。词表之外的句子不会被自动改写。说明见 [DESIGN.md](DESIGN.md)，种子表在 [`config/banned_terms.json`](config/banned_terms.json)。
+
+词表是 JSON 数组，每行只写原词和中英说法，例如 `{ "term": "Codex", "zh": "AI编程工具", "en": "AI coding tool" }`。同一个说法可以写多行。不需要备注或额外的词组字段。
+
+主表现在包括 Codex、Claude、Claude Code、ChatGPT、GPT、Gemini、Cursor，以及 Twitter / 推特 / X平台、YouTube / 油管、TikTok / 抖音、淘宝 / 京东、飞书 / 钉钉、豆包、微信等。完整列表在 [`config/banned_terms.json`](config/banned_terms.json)。不匹配单独的字母 X。加群、扫码这类整句不单独立条。详见 [DESIGN.md](DESIGN.md)。
+
+个人词表放在 `~/.config/chaochun-subtitle/banned_terms.json`，或在上面的配置里写 `banned_terms`，也可以设 `CHAOCHUN_SUBTITLE_BANNED_TERMS`。没有个人文件时使用仓库种子表。不要把这些通用说法写进 glossary。
+
+用户确认开启后，草稿和烧录都加上 `--paraphrase-banned-terms`。中文台词、章节标题走该行的 `zh`，英文走 `en`。
 
 ## 手动运行
 
@@ -207,7 +222,7 @@ mkdir -p "$WORK"
   --no-beauty
 ```
 
-已有英文 SRT 时加 `--en-srt`；只要中文成片时加 `--no-bilingual`。预览、草稿检查命令见 [SKILL.md](SKILL.md)。
+已有英文 SRT 时加 `--en-srt`；只要中文成片时加 `--no-bilingual`。要做发布用的泛化改写时再加 `--paraphrase-banned-terms`。预览、草稿检查命令见 [SKILL.md](SKILL.md)。
 
 ### 用合成画面复现 letterbox 成片
 
@@ -237,6 +252,7 @@ ffmpeg -ss 1.35 -i /tmp/colorbar_subtitled.mp4 -frames:v 1 letterbox-frame.png
 - 预览服务只在本机启动；端口默认是 `8765`。
 - 配置目录默认为 `~/.config/chaochun-subtitle/`（`CHAOCHUN_SUBTITLE_*` 环境变量优先）。未迁移时仍会读取上游 `OIL_SUBTITLE_*` / `SCREEN_STUDIO_EDITOR_*` 以及 `~/.config/oil-subtitle/`。
 - 不想显示章节进度条时，除了口头告诉 Agent，也可以设置 `CHAOCHUN_SUBTITLE_PROGRESS_ENABLED=0`。
+- 违禁词泛化改写默认关闭，只在烧录命令带 `--paraphrase-banned-terms` 时生效。
 
 ## 数据边界
 
@@ -257,7 +273,9 @@ ffmpeg -ss 1.35 -i /tmp/colorbar_subtitled.mp4 -frames:v 1 letterbox-frame.png
 | `scripts/prepare_subtitles.py` | 准备中文字幕、章节和预览 manifest |
 | `scripts/preview_editor.py` | 启动本地字幕预览编辑器 |
 | `scripts/learn_glossary.py` | 从人工修改中生成待 Agent 审阅的错词报告，不自动写词库 |
-| `scripts/burn_subtitles.py` | 生成 SRT/ASS，pad 黑边并烧录 MP4 |
+| `scripts/burn_subtitles.py` | 生成 SRT/ASS，pad 黑边并烧录 MP4；`--paraphrase-banned-terms` 时按词表替换中英显示文字 |
+| `scripts/banned_terms.py` | 读取 `config/banned_terms.json`，做确定性的中英泛化替换 |
+| `config/banned_terms.json` | 可编辑的泛化词表种子 |
 
 ## 测试
 

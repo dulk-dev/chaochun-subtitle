@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dulk-dev/chaochun-subtitle/config/banned_terms.schema.json",
+  "title": "Banned-term paraphrase lexicon",
+  "description": "JSON array. Each row is one term and its Chinese and English display wording. Applied only with --paraphrase-banned-terms.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["term", "zh", "en"],
+    "properties": {
+      "term": { "type": "string", "minLength": 1 },
+      "zh": { "type": "string", "minLength": 1 },
+      "en": { "type": "string", "minLength": 1 }
+    }
+  }
+}
