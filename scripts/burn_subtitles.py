@@ -20,12 +20,22 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+from caption_fit import (
+    attach_english_by_overlap,
+    can_merge_english,
+    fit_cue,
+    join_caption_text,
+    max_visual_units,
+    merge_english_text,
+    merge_src_idxs,
+    repair_weak_starts,
+    shrink_scale,
+)
 from subtitle_text import add_cjk_spacing
 from user_config import resolve_glossary_path as resolve_user_glossary_path
 from user_config import resolve_progress_enabled
 
 _DISPLAY_REPLACEMENTS: list[tuple[re.Pattern, str]] = []
-_SUBTITLE_BOX_MAX_WIDTH_RATIO = 0.92
 _UPSTREAM_PROGRESS_FONT_1080P = 22
 # Compact chapter strip: larger labels, tighter top pad than font*2.10 + 80px floor.
 _PROGRESS_FONT_MIN = 36
@@ -141,62 +151,6 @@ def _visual_len(text: str) -> float:
         else:
             w += 0.55
     return w
-
-
-def _split_text(text: str, max_chars: int) -> list[str]:
-    """
-    Split text into subtitle-sized chunks.
-    Uses visual width (CJK=1.0, Latin=0.55) so mixed lines don't overflow.
-    Tries to break at sentence-end punctuation first, then soft punctuation,
-    then cuts at word boundaries as a last resort.
-    """
-    if _visual_len(text) <= max_chars:
-        return [text]
-
-    result = []
-
-    def split_at(chunk: str, pattern: str) -> list[str]:
-        parts = re.split(pattern, chunk)
-        return [p.strip() for p in parts if p.strip()]
-
-    # Pass 1: split at sentence-ending punctuation
-    chunks = split_at(text, r'(?<=[。！？!?])\s*')
-    if len(chunks) == 1:
-        chunks = [text]  # no hard punct found
-
-    # Pass 2: split oversized chunks at soft punctuation
-    mid = []
-    for c in chunks:
-        if _visual_len(c) <= max_chars:
-            mid.append(c)
-        else:
-            sub = split_at(c, r'(?<=[，,、；;])\s*')
-            mid.extend(sub if len(sub) > 1 else [c])
-
-    # Pass 3: cut at word boundaries, using visual width to find the split point
-    for c in mid:
-        while _visual_len(c) > max_chars:
-            # Walk forward to find the last space whose prefix fits within max_chars
-            cut_at = 0
-            best_space = -1
-            vw = 0.0
-            for i, ch in enumerate(c):
-                if ch == ' ' and vw <= max_chars:
-                    best_space = i
-                vw += _visual_len(ch)
-                if vw > max_chars:
-                    break
-                cut_at = i + 1
-            if best_space > len(c) // 4:
-                cut_at = best_space
-            # cut_at may be 0 if the very first char exceeds budget; force at least 1
-            cut_at = max(cut_at, 1)
-            result.append(c[:cut_at].rstrip())
-            c = c[cut_at:].lstrip()
-        if c:
-            result.append(c)
-
-    return result or [text]
 
 
 def _timed_tokens_from_words(words: list[dict]) -> list[dict]:
@@ -428,7 +382,7 @@ def _layout_timed_tokens(tokens: list[dict], max_chars: int) -> list[dict]:
             length = _visual_len(_tokens_text(chunk))
             duration = _line_duration(chunk)
 
-            if idx > start and (length > max_chars * 1.16 or duration > max_duration + 0.8):
+            if idx > start and (length > max_chars or duration > max_duration + 0.8):
                 break
 
             score = _boundary_score(tokens[start:idx + 1] + tokens[idx + 1:idx + 2], len(chunk) - 1, max_chars)
@@ -462,28 +416,38 @@ def _merge_short_lines(lines: list[dict], max_chars: int) -> list[dict]:
 
     for line in lines:
         if not merged:
-            merged.append(line)
+            merged.append(dict(line))
             continue
-        length = _visual_len(line["text"])
-        duration = line["end"] - line["start"]
+        item = dict(line)
+        length = _visual_len(item["text"])
+        duration = item["end"] - item["start"]
         prev = merged[-1]
-        combined_text = (prev["text"] + line["text"]).strip()
+        combined_text = join_caption_text(prev["text"], item["text"])
         combined_len = _visual_len(combined_text)
-        combined_dur = line["end"] - prev["start"]
-        gap = line["start"] - prev["end"]
+        combined_dur = item["end"] - prev["start"]
+        gap = item["start"] - prev["end"]
 
         should_merge = (
             (length < min_chars or duration < min_duration)
-            and combined_len <= max_chars * 1.08
+            and combined_len <= max_chars
             and combined_dur <= 4.2
             and gap <= 0.45
+            and can_merge_english(prev, item)
         )
 
         if should_merge:
-            prev["end"] = line["end"]
+            prev["end"] = item["end"]
             prev["text"] = combined_text
+            prev["src_idxs"] = merge_src_idxs(prev, item)
+            english = merge_english_text(prev, item)
+            if english:
+                prev["en"] = english
+            prev["shrink_scale"] = min(
+                float(prev.get("shrink_scale") or 1.0),
+                float(item.get("shrink_scale") or 1.0),
+            )
         else:
-            merged.append(line)
+            merged.append(item)
 
     return merged
 
@@ -532,32 +496,47 @@ def segments_to_lines(segments: list[dict], max_chars: int = 16) -> list[dict]:
       timing within a segment is interpolated proportionally by character count
     """
     lines = []
-    for seg in segments:
+    for index, seg in enumerate(segments):
         text = seg["text"].strip()
         if not text:
             continue
 
+        english = str(seg.get("en") or seg.get("text_en") or "").strip()
         timed_word_lines = _words_to_timed_lines(seg, max_chars)
         if timed_word_lines:
-            lines.extend(timed_word_lines)
+            for line in timed_word_lines:
+                line["src_idxs"] = [index]
+                if english:
+                    line["en"] = english
+                lines.append(line)
             continue
 
         # Apply CJK spacing before splitting so word-boundary detection can see
         # spaces at CJK/Latin boundaries, e.g. "这个Screen" becomes "这个 Screen".
         text = add_cjk_spacing(_apply_display_replacements(add_cjk_spacing(_strip_display_punctuation(text)))).strip()
+        line = {
+            "start": seg["start"],
+            "end": seg["end"],
+            "text": text,
+            "src_idxs": [index],
+        }
+        if english:
+            line["en"] = english
+        lines.append(line)
 
-        start = seg["start"]
-        end = seg["end"]
-        sub_lines = _split_text(text, max_chars)
-
-        if len(sub_lines) == 1:
-            lines.append({"start": start, "end": end, "text": sub_lines[0]})
-        else:
-            # Join as a single multi-line subtitle using \n (converted to \N in ASS)
-            # This keeps the original segment timing intact and avoids time-splitting words
-            lines.append({"start": start, "end": end, "text": "\n".join(sub_lines)})
-
-    return _filter_noise_lines(_merge_short_lines(_filter_noise_lines(lines), max_chars))
+    cleaned = _filter_noise_lines(_merge_short_lines(_filter_noise_lines(lines), max_chars))
+    repaired = repair_weak_starts(cleaned, max_chars)
+    fitted: list[dict] = []
+    for line in repaired:
+        fitted.extend(fit_cue(
+            str(line.get("text") or ""),
+            float(line["start"]),
+            float(line["end"]),
+            max_chars,
+            existing_en=str(line.get("en") or "") or None,
+            src_idxs=list(line.get("src_idxs") or []),
+        ))
+    return _filter_noise_lines(fitted)
 
 
 def normalize_line_timing(lines: list[dict], min_gap: float = 0.02) -> list[dict]:
@@ -736,6 +715,10 @@ def preview_layout_payload(layout: dict) -> dict:
         "progress_font_frac": layout["progress_font"] / canvas_h,
         "stack_top_inset_bar_frac": layout.get("stack_top_inset", 0) / bottom,
         "stack_gap_bar_frac": layout.get("stack_gap", 0) / bottom,
+        "zh_max_visual": max_visual_units(layout["canvas_width"], layout["zh_font"]),
+        "en_max_visual": max_visual_units(
+            layout["canvas_width"], layout["en_font"] or layout["zh_font"]
+        ),
     }
 
 
@@ -748,10 +731,7 @@ def letterbox_pad_filter(layout: dict) -> str:
 
 
 def _safe_max_chars_for_font(video_width: int, font_size: int) -> int:
-    pad_x = int(font_size * 0.28)
-    usable_width = int(video_width * _SUBTITLE_BOX_MAX_WIDTH_RATIO) - pad_x * 2
-    char_width = font_size * 0.72
-    return max(4, int(usable_width / char_width))
+    return max_visual_units(video_width, font_size)
 
 
 def _safe_max_chars_for_video(video_width: int, video_height: int) -> int:
@@ -771,28 +751,13 @@ def _resolve_effective_max_chars(
     safe = _safe_max_chars_for_font(video_width, layout["zh_font"])
     if requested > 0:
         return min(requested, safe)
-    if square_output:
-        return min(22, safe)
     return safe
 
 
 def _wrap_display_text(text: str, max_chars: int, *, prefer_single_line: bool = True) -> str:
-    text = final_display_text(text).strip()
-    if max_chars <= 0 or not text:
-        return text
-    if prefer_single_line and _visual_len(text) <= max_chars:
-        return text
-
-    parts = []
-    for raw in text.splitlines():
-        raw = raw.strip()
-        if not raw:
-            continue
-        if prefer_single_line and _visual_len(raw) <= max_chars:
-            parts.append(raw)
-        else:
-            parts.extend(_split_text(raw, max_chars))
-    return "\n".join(part for part in parts if part)
+    """Normalize caption text. Never insert a visual wrap; overflow is fitted earlier."""
+    del max_chars, prefer_single_line
+    return re.sub(r"\s+", " ", final_display_text(text)).strip()
 
 
 def _rect_path(width: int, height: int) -> str:
@@ -1141,26 +1106,8 @@ def line_english_text(line: dict) -> str:
 
 
 def merge_english_srt(lines: list[dict], english_lines: list[dict]) -> list[dict]:
-    """Attach English captions onto Chinese lines by index, then by start time."""
-    merged = [dict(line) for line in lines]
-    if len(english_lines) == len(merged):
-        for item, english in zip(merged, english_lines):
-            item["en"] = english["text"]
-        return merged
-    remaining = list(english_lines)
-    for item in merged:
-        match_idx = next(
-            (
-                index
-                for index, english in enumerate(remaining)
-                if abs(float(english["start"]) - float(item["start"])) <= 0.12
-            ),
-            None,
-        )
-        if match_idx is None:
-            continue
-        item["en"] = remaining.pop(match_idx)["text"]
-    return merged
+    """Attach English captions by equal count and overlap; never drop the rest silently."""
+    return attach_english_by_overlap(lines, english_lines)
 
 
 def _translate_with_qwen(texts: list[str], *, model: str = "qwen-plus") -> list[str]:
@@ -1201,7 +1148,8 @@ def translate_caption_lines(
 ) -> list[dict]:
     """Fill missing English text on subtitle lines. Existing `en` values are kept."""
     pending_indexes = [
-        index for index, line in enumerate(lines) if not line_english_text(line)
+        index for index, line in enumerate(lines)
+        if not line_english_text(line) and not line.get("skip_translate")
     ]
     if not pending_indexes:
         return [dict(line) for line in lines]
@@ -1259,22 +1207,30 @@ def generate_ass(lines: list[dict], output_path: Path, video_width: int = 1920,
 
     event_lines = list(progress_events)
     center_x = layout["canvas_width"] // 2
-    for line in lines:
+    fitted_lines = _ensure_fitted_caption_lines(lines, zh_max, preserve_text=preserve_text)
+    for line in fitted_lines:
         start = seconds_to_ass_time(line["start"])
         end = seconds_to_ass_time(line["end"])
-        zh_source = line["text"].strip() if preserve_text else _wrap_display_text(line["text"], zh_max)
-        zh_display = _ass_escape(zh_source).replace("\n", r"\N")
+        zh_source = re.sub(r"\s+", " ", str(line["text"] or "")).strip()
+        zh_display = _ass_escape(zh_source)
+        zh_tags = _caption_pos_tags(
+            center_x, layout["zh_y"], layout["zh_font"],
+            float(line.get("shrink_scale") or 1.0), _visual_len(zh_source), zh_max,
+        )
         event_lines.append(
             f"Dialogue: 5,{start},{end},CaptionZh,,0,0,0,,"
-            f"{{\\an5\\pos({center_x},{layout['zh_y']})}}{zh_display}"
+            f"{{{zh_tags}}}{zh_display}"
         )
-        english = line_english_text(line)
+        english = re.sub(r"\s+", " ", line_english_text(line)).strip()
         if bilingual and english:
-            en_source = english if preserve_text else _wrap_display_text(english, en_max)
-            en_display = _ass_escape(en_source).replace("\n", r"\N")
+            en_display = _ass_escape(english)
+            en_tags = _caption_pos_tags(
+                center_x, layout["en_y"], layout["en_font"] or layout["zh_font"],
+                1.0, _visual_len(english), en_max,
+            )
             event_lines.append(
                 f"Dialogue: 5,{start},{end},CaptionEn,,0,0,0,,"
-                f"{{\\an5\\pos({center_x},{layout['en_y']})}}{en_display}"
+                f"{{{en_tags}}}{en_display}"
             )
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -1304,7 +1260,9 @@ def write_subtitle_draft(lines: list[dict], output_path: Path, max_chars: int = 
         for idx, line in enumerate(lines, 1):
             f.write(f"{idx}\n")
             f.write(f"{seconds_to_srt_time(line['start'])} --> {seconds_to_srt_time(line['end'])}\n")
-            text = line["text"] if preserve_text else _wrap_display_text(line["text"], max_chars)
+            text = re.sub(r"\s+", " ", str(line["text"] or "")).strip()
+            if not preserve_text:
+                text = _wrap_display_text(text, max_chars)
             f.write(text)
             f.write("\n\n")
     log(f"🧾 Wrote subtitle draft: {output_path} ({len(lines)} lines)")
@@ -1343,17 +1301,88 @@ def read_srt_lines(input_path: Path) -> list[dict]:
     return lines
 
 
+def fit_reviewed_lines(lines: list[dict], max_chars: int) -> list[dict]:
+    """Turn reviewed SRT cues into sequential single-line events.
+
+    In-cue newlines become time splits. A cue with no newline that is still
+    too wide is shrunk, not re-segmented.
+    """
+    fitted = []
+    for index, line in enumerate(lines):
+        text = str(line.get("text") or "")
+        has_newline = "\n" in text
+        events = fit_cue(
+            text,
+            float(line["start"]),
+            float(line["end"]),
+            max_chars,
+            existing_en=line_english_text(line) or None,
+            src_idxs=[index],
+        )
+        if not has_newline and len(events) > 1:
+            width = _visual_len(re.sub(r"\s+", " ", text).strip())
+            fitted.append({
+                "start": line["start"],
+                "end": line["end"],
+                "text": text.replace("\n", " ").strip(),
+                "src_idxs": [index],
+                "shrink_scale": shrink_scale(width, max_chars),
+            })
+            continue
+        fitted.extend(events)
+    return fitted
+
+
+def _ensure_fitted_caption_lines(
+    lines: list[dict], max_chars: int, *, preserve_text: bool
+) -> list[dict]:
+    """Last-gate fit so ASS captions never contain a visual wrap."""
+    fitted = []
+    for index, line in enumerate(lines):
+        raw = str(line.get("text") or "")
+        text = raw.strip() if preserve_text else _wrap_display_text(raw, max_chars)
+        events = fit_cue(
+            text if preserve_text else text,
+            float(line["start"]),
+            float(line["end"]),
+            max_chars,
+            existing_en=line_english_text(line) or None,
+            src_idxs=list(line.get("src_idxs") or [index]),
+        )
+        if preserve_text and "\n" not in raw and len(events) > 1:
+            width = _visual_len(re.sub(r"\s+", " ", raw).strip())
+            events = [{
+                **dict(line),
+                "text": re.sub(r"\s+", " ", raw).strip(),
+                "shrink_scale": min(
+                    float(line.get("shrink_scale") or 1.0),
+                    shrink_scale(width, max_chars),
+                ),
+            }]
+        for event in events:
+            event["shrink_scale"] = min(
+                float(line.get("shrink_scale") or 1.0),
+                float(event.get("shrink_scale") or 1.0),
+            )
+            fitted.append(event)
+    return fitted
+
+
+def _caption_pos_tags(
+    x: int, y: int, font_size: int, shrink: float, width: float, cap: int
+) -> str:
+    tags = f"\\an5\\pos({x},{y})"
+    scale = float(shrink or 1.0)
+    if cap > 0 and width > cap:
+        scale = min(scale, shrink_scale(width, cap))
+    if scale < 0.999:
+        tags += f"\\fs{max(1, int(round(font_size * scale)))}"
+    return tags
+
+
 def wrap_reviewed_lines(lines: list[dict], max_chars: int) -> list[dict]:
-    """Wrap reviewed SRT text for the target video shape while keeping timings."""
-    wrapped = []
-    for line in lines:
-        item = dict(line)
-        parts = []
-        for raw in item["text"].splitlines():
-            parts.extend(_split_text(raw.strip(), max_chars))
-        item["text"] = "\n".join(p for p in parts if p)
-        wrapped.append(item)
-    return wrapped
+    """Backward-compatible alias; reviewed overflow is fitted, not wrapped."""
+    return fit_reviewed_lines(lines, max_chars)
 
 
 def _render_progress(elapsed_us: int, total_s: float, speed: float):
@@ -1776,7 +1805,7 @@ def main():
         ),
     )
     parser.add_argument("--max-chars", type=int, default=0,
-                        help="Max visual chars per subtitle line. Default 0 = fill the letterbox width as a single line.")
+                        help="Max visual ems per subtitle line. Default 0 = fill the letterbox as a single line.")
     parser.add_argument(
         "--bilingual",
         action=argparse.BooleanOptionalAction,
@@ -1936,7 +1965,8 @@ def main():
         effective_max_chars = _resolve_effective_max_chars(
             args.max_chars, ass_w, ass_h, args.square_output, bilingual=args.bilingual
         )
-        log("🔒 Preserving reviewed SRT text, line breaks, and timing exactly")
+        lines = fit_reviewed_lines(lines, effective_max_chars)
+        log("🔒 Preserving reviewed SRT characters; in-cue newlines become sequential lines")
     else:
         # Load transcript (supports both plain array and {"segments": [...]} from preview editor)
         with open(transcript_path, encoding="utf-8") as f:
@@ -1950,15 +1980,9 @@ def main():
         )
         log(f"🔠 Subtitle line width: {effective_max_chars} visual chars")
         lines = segments_to_lines(segments, effective_max_chars)
-        if len(lines) == len(segments):
-            for line, segment in zip(lines, segments):
-                english = str(segment.get("en") or segment.get("text_en") or "").strip()
-                if english:
-                    line["en"] = english
         log(f"🔤 Generated {len(lines)} subtitle lines")
 
-    if not srt_input_path:
-        lines = normalize_line_timing(lines)
+    lines = normalize_line_timing(lines)
 
     if args.bilingual:
         en_srt_path = Path(args.en_srt) if args.en_srt else None

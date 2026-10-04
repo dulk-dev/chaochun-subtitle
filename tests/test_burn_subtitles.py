@@ -93,8 +93,15 @@ oil-html Vibe Coding，保留标点
             )
             content = path.read_text(encoding="utf-8")
 
-        self.assertIn("grill-me\\N3:4 和 4:3 oil-html Vibe Coding", content)
-        self.assertNotIn("grillme\\N", content)
+        zh_events = [
+            row for row in content.splitlines()
+            if row.startswith("Dialogue:") and "CaptionZh" in row
+        ]
+        self.assertEqual(len(zh_events), 2)
+        self.assertIn("grill-me", zh_events[0])
+        self.assertIn("3:4 和 4:3 oil-html Vibe Coding", zh_events[1])
+        self.assertTrue(all("\\N" not in row.split(",,", 4)[-1] for row in zh_events))
+        self.assertNotIn("grillme", content)
         self.assertIn("Style: CaptionZh,", content)
         self.assertIn("&H00FFFFFF", content)
 
@@ -594,6 +601,10 @@ class BilingualAssTests(unittest.TestCase):
 
 
 class SingleLineWrapTests(unittest.TestCase):
+    def test_letterbox_budget_uses_one_em(self):
+        max_chars = BURN_SUBTITLES._resolve_effective_max_chars(0, 1920, 1080, False)
+        self.assertEqual(max_chars, 26)
+
     def test_long_caption_stays_one_line_within_letterbox_width(self):
         text = "今天我们继续讲解 Claude Code 和 GPT 的实战用法"
         max_chars = BURN_SUBTITLES._resolve_effective_max_chars(0, 1920, 1080, False)
@@ -601,13 +612,44 @@ class SingleLineWrapTests(unittest.TestCase):
         self.assertNotIn("\n", wrapped)
         self.assertLessEqual(BURN_SUBTITLES._visual_len(wrapped), max_chars)
 
-    def test_overlong_caption_wraps_only_as_a_last_resort(self):
+    def test_overlong_caption_becomes_sequential_events(self):
         text = "这是一句非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的中文字幕用于验证限宽"
-        max_chars = 16
-        wrapped = BURN_SUBTITLES._wrap_display_text(text, max_chars)
-        self.assertIn("\n", wrapped)
-        for part in wrapped.split("\n"):
-            self.assertLessEqual(BURN_SUBTITLES._visual_len(part), max_chars + 0.01)
+        lines = BURN_SUBTITLES.segments_to_lines(
+            [{"start": 0.0, "end": 4.0, "text": text}],
+            max_chars=16,
+        )
+        self.assertGreaterEqual(len(lines), 2)
+        for line in lines:
+            self.assertNotIn("\n", line["text"])
+            self.assertLessEqual(BURN_SUBTITLES._visual_len(line["text"]), 16.01)
+
+    def test_generate_ass_does_not_insert_visual_wraps(self):
+        lines = BURN_SUBTITLES.segments_to_lines(
+            [{"start": 0.0, "end": 4.0, "text": "这是一句非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的中文字幕用于验证限宽"}],
+            max_chars=16,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fit.ass"
+            BURN_SUBTITLES.generate_ass(lines, path, 1920, 1080, max_chars=16)
+            content = path.read_text(encoding="utf-8")
+        zh_events = [
+            row for row in content.splitlines()
+            if row.startswith("Dialogue:") and "CaptionZh" in row
+        ]
+        self.assertGreaterEqual(len(zh_events), 2)
+        self.assertTrue(all("\\N" not in row.split(",,", 4)[-1] for row in zh_events))
+
+    def test_src_idxs_keep_english_after_merge(self):
+        lines = BURN_SUBTITLES.segments_to_lines(
+            [
+                {"start": 0.0, "end": 1.0, "text": "今天我们来看", "en": "Today we look"},
+                {"start": 1.0, "end": 2.0, "text": "一下这个", "en": "at this"},
+            ],
+            max_chars=26,
+        )
+        english = " ".join(line["en"] for line in lines if line.get("en"))
+        self.assertIn("Today we look", english)
+        self.assertIn("at this", english)
 
 
 if __name__ == "__main__":

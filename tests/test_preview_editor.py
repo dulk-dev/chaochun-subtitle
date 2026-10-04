@@ -112,6 +112,10 @@ class ProgressLayoutTests(unittest.TestCase):
         self.assertIn("line-height: 1.05", zh.group("rules"))
         self.assertIn("--lb-en-font", en.group("rules"))
         self.assertIn("line-height: 1.08", en.group("rules"))
+        self.assertNotIn("text-overflow: ellipsis", zh.group("rules"))
+        self.assertNotIn("text-overflow: ellipsis", en.group("rules"))
+        self.assertIn("caption-fit-badge", PREVIEW_EDITOR.HTML_TEMPLATE)
+        self.assertIn("/api/caption-fit", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("font-size: .72em", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("font-size: .48em", PREVIEW_EDITOR.HTML_TEMPLATE)
         self.assertNotIn("inset: 8% 6% auto", PREVIEW_EDITOR.HTML_TEMPLATE)
@@ -144,6 +148,28 @@ class LetterboxApiTests(unittest.TestCase):
         )
         self.assertLess(payload["top_frac"], 0.08)
         self.assertGreater(payload["bottom_frac"], payload["top_frac"])
+        self.assertIn("zh_max_visual", payload)
+        self.assertEqual(payload["zh_max_visual"], expected["zh_max_visual"])
+
+
+class CaptionFitApiTests(unittest.TestCase):
+    def test_caption_fit_endpoint_flags_overflow(self):
+        response = PREVIEW_EDITOR.app.test_client().post(
+            "/api/caption-fit",
+            json={
+                "width": 1920,
+                "height": 1080,
+                "segments": [{
+                    "start": 0,
+                    "end": 4,
+                    "text": "如果你在用别的这种 agent 或者其他的 app 呢也可以做类似的一个探索",
+                }],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertGreaterEqual(payload["zh_max_visual"], 20)
+        self.assertTrue(payload["items"][0]["will_split"] or payload["items"][0]["will_shrink"])
 
 
 class TimelineSearchFilterTests(unittest.TestCase):

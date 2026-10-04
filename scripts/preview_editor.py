@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 
 from burn_subtitles import letterbox_layout, preview_layout_payload
+from caption_fit import plan_preview_overflow
 from learn_glossary import learn_manual_edits
 
 from flask import (
@@ -193,7 +194,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     color: #ffffff;
     max-width: 92%;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
   .current-subtitle-en {
@@ -205,7 +205,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     line-height: 1.08;
     max-width: 92%;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .caption-fit-badge {
+    margin: 0 0 4px;
+    max-width: 92%;
+    color: #f4d58d;
+    font-size: calc(max(11px, var(--lb-en-font) * var(--lb-scale) * 0.72px));
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
     white-space: nowrap;
   }
   .bilingual-mode .current-subtitle { text-shadow: none; }
@@ -766,6 +775,12 @@ function segmentEn(seg) {
   return (seg.en || seg.text_en || '').trim();
 }
 
+function captionFitFor(seg) {
+  const index = segments.indexOf(seg);
+  if (index < 0) return null;
+  return captionFitByIndex[index] || null;
+}
+
 function renderCurrentSubtitle(seg) {
   curSub.replaceChildren();
   if (!seg) {
@@ -774,6 +789,15 @@ function renderCurrentSubtitle(seg) {
   }
   const zhText = segmentZh(seg);
   const enText = segmentEn(seg);
+  const fit = captionFitFor(seg);
+  if (fit && (fit.will_split || fit.will_shrink)) {
+    const badge = document.createElement('div');
+    badge.className = 'caption-fit-badge';
+    badge.textContent = fit.will_split
+      ? `烧录时将拆成 ${fit.piece_count} 条`
+      : '烧录时将缩小以保持单行';
+    curSub.append(badge);
+  }
   if (zhText) {
     const zh = document.createElement('div');
     zh.className = 'current-subtitle-zh';
@@ -796,6 +820,7 @@ function progressEnabled() {
 }
 
 let letterboxLayout = DEFAULT_LAYOUT;
+let captionFitByIndex = [];
 
 function applyLetterboxLayout(layout) {
   const wrap = document.querySelector('.video-wrap');
@@ -828,9 +853,35 @@ async function refreshLetterboxLayout() {
       `/api/layout?width=${width}&height=${height}&bilingual=${bilingual}&progress=${progress}`
     )).json();
     applyLetterboxLayout(data);
+    await refreshCaptionFit();
   } catch (err) {
     applyLetterboxLayout(letterboxLayout || DEFAULT_LAYOUT);
   }
+}
+
+async function refreshCaptionFit() {
+  const layout = letterboxLayout || DEFAULT_LAYOUT;
+  try {
+    const data = await (await fetch('/api/caption-fit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        width: layout.content_width,
+        height: layout.content_height,
+        bilingual: bilingualMode ? 1 : 0,
+        segments: segments.map(seg => ({
+          start: seg.start,
+          end: seg.end,
+          text: segmentZh(seg),
+          en: segmentEn(seg),
+        })),
+      }),
+    })).json();
+    captionFitByIndex = data.items || [];
+  } catch (err) {
+    captionFitByIndex = [];
+  }
+  if (typeof syncCurSub === 'function') syncCurSub(false);
 }
 
 function disableNativeTextTracks() {
@@ -954,6 +1005,7 @@ async function switchLang(code) {
   setAudio(L);
   render();
   updateInfo();
+  await refreshCaptionFit();
   syncCurSub();   // 立即按当前时间刷新字幕浮层+高亮,不必等播放
 }
 
@@ -1181,6 +1233,7 @@ function finishEdit(id, field, value) {
   }
   editMode = null;
   saveLS();
+  refreshCaptionFit();
 }
 
 function toggleDelete(id) {
@@ -1420,6 +1473,35 @@ def api_layout():
         progress=progress,
     )
     response = jsonify(preview_layout_payload(layout))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.route("/api/caption-fit", methods=["POST"])
+def api_caption_fit():
+    """Preview how source cues would be burned. Does not rewrite saved segments."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        width = int(float(payload.get("width") or request.args.get("width") or 1920))
+        height = int(float(payload.get("height") or request.args.get("height") or 1080))
+    except (TypeError, ValueError):
+        width, height = 1920, 1080
+    bilingual = str(payload.get("bilingual", 1)).lower() not in {"0", "false", "no"}
+    layout = letterbox_layout(
+        max(2, width),
+        max(2, height),
+        bilingual=bilingual,
+        progress=False,
+    )
+    cap = layout and preview_layout_payload(layout).get("zh_max_visual") or 26
+    segments = payload.get("segments") or []
+    if not isinstance(segments, list):
+        segments = []
+    response = jsonify({
+        "zh_max_visual": cap,
+        "items": plan_preview_overflow(segments, cap),
+        "note": "Preview uses source-frame geometry; square/resized burns may differ.",
+    })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
